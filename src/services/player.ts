@@ -24,6 +24,11 @@ import {getGuildSettings} from '../utils/get-guild-settings.js';
 import {buildPlayingMessageEmbed} from '../utils/build-embed.js';
 import {getYouTubeMediaSource} from '../utils/yt-dlp.js';
 import {Setting} from '@prisma/client';
+import {createReadStream as fsCreateReadStream} from 'fs';
+import DjTts from './dj-tts.js';
+import DjCommentary from './dj-commentary.js';
+import DjRecommender from './dj-recommender.js';
+import {getDjSettings} from '../utils/get-dj-settings.js';
 
 export enum MediaSource {
   Youtube,
@@ -257,6 +262,17 @@ export default class {
 
       this.status = STATUS.PLAYING;
       this.nowPlaying = currentSong;
+
+      if (this.djRecommender) {
+        void this.djRecommender.recordPlay({
+          guildId: this.guildId,
+          youtubeId: currentSong.url,
+          title: currentSong.title,
+          artist: currentSong.artist,
+          requestedBy: currentSong.requestedBy === 'dj' ? null : currentSong.requestedBy,
+          wasDjPick: currentSong.requestedBy === 'dj',
+        }).catch(error => debug('Failed to record DJ play history:', error));
+      }
 
       if (currentSong.url === this.lastSongURL) {
         this.startTrackingPosition();
@@ -648,17 +664,22 @@ export default class {
     }
 
     if (newState.status === AudioPlayerStatus.Idle && this.status === STATUS.PLAYING) {
+      await this.maybeAutoQueue();
+      
       if (!this.canGoForward(1)) {
         await this.finishQueue();
         return;
       }
 
+      const previousSong = this.getCurrent();
       await this.forward(1);
       const currentSong = this.getCurrent();
       if (!currentSong) {
         return;
       }
 
+      await this.maybeAnnounce(currentSong, previousSong);
+      
       // Auto announce the next song if configured to
       const settings = await getGuildSettings(this.guildId);
       const {autoAnnounceNextSong} = settings;
@@ -759,4 +780,97 @@ export default class {
     // Audio resource expects a float between 0 and 1 to represent level percentage
     this.audioResource?.volume?.setVolume((level ?? this.getVolume()) / 100);
   }
+
+  private djTrackCounter = 0;
+
+   private async maybeAnnounce(song: QueuedSong, previous: QueuedSong | null): Promise<void> {
+    if (!this.djTts || !this.djCommentary || !this.voiceConnection) {
+      return;
+    }
+  
+    const settings = await getDjSettings(this.guildId);
+    if (!settings.enabled || !settings.commentaryEnabled) {
+      return;
+    }
+  
+    this.djTrackCounter++;
+    if (this.djTrackCounter % settings.commentaryFrequency !== 0) {
+      return;
+    }
+  
+    try {
+      const text = await this.djCommentary.generateAndLog(this.guildId, song.url, {
+        upcomingTitle: song.title,
+        upcomingArtist: song.artist,
+        previousTitle: previous?.title,
+        previousArtist: previous?.artist,
+        persona: settings.persona,
+      });
+  
+      const filePath = await this.djTts.renderToFile(text, settings.voiceId);
+  
+      await new Promise<void>((resolve, reject) => {
+        const introPlayer = createAudioPlayer();
+        const resource = createAudioResource(fsCreateReadStream(filePath));
+  
+        introPlayer.once(AudioPlayerStatus.Idle, () => {
+          introPlayer.stop(true);
+          resolve();
+        });
+        introPlayer.once('error', (err: Error) => {
+          introPlayer.stop(true);
+          reject(err);
+        });
+  
+        this.voiceConnection!.subscribe(introPlayer);
+        introPlayer.play(resource);
+      });
+  
+      // Hand the connection back to the main audio player for the track.
+      if (this.audioPlayer) {
+        this.voiceConnection.subscribe(this.audioPlayer);
+      }
+    } catch (error) {
+      // Never let a TTS/commentary failure block actual music playback.
+      debug('DJ commentary failed, continuing without it:', error);
+    }
+  }
+  
+  private async maybeAutoQueue(): Promise<void> {
+    if (!this.djRecommender) {
+      return;
+    }
+  
+    const settings = await getDjSettings(this.guildId);
+    if (!settings.enabled) {
+      return;
+    }
+  
+    if (this.queueSize() >= settings.minQueueSize) {
+      return;
+    }
+  
+    try {
+      const picks = await this.djRecommender.recommendNext(this.guildId, settings.minQueueSize);
+  
+      for (const pick of picks) {
+        this.add({
+          title: pick.title,
+          artist: pick.artist,
+          url: pick.youtubeId,
+          length: 0, // unknown until resolved; see note below
+          offset: 0,
+          playlist: null,
+          isLive: false,
+          thumbnailUrl: null,
+          source: MediaSource.Youtube,
+          addedInChannelId: '', // no channel context for DJ auto-picks
+          requestedBy: 'dj',
+        });
+      }
+    } catch (error) {
+      debug(`DJ auto-queue skipped for guild ${this.guildId}:`, error);
+    }
+  }
+
 }
