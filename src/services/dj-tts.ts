@@ -1,14 +1,16 @@
-// src/services/dj-tts.ts
+// Renders DJ commentary text to an audio file using a self-hosted Kokoro
+// TTS server (https://github.com/hexgrad/Kokoro-82M, Apache 2.0), with
+// local disk caching so repeated phrasing doesn't re-run inference.
 //
-// Renders DJ commentary text to an audio file, with local disk caching so
-// repeated phrasing doesn't re-bill the TTS provider. Returns a file path
-// that Player can hand to createAudioResource.
+// Kokoro exposes an OpenAI-compatible /v1/audio/speech endpoint, so this
+// is a plain fetch against your own container — no API key, no per-char
+// billing. Run it via Docker, e.g.:
 //
-// Now that I've seen the real config.ts, this injects Config properly
-// instead of reading process.env directly. DATA_DIR already exists on
-// Config — ELEVENLABS_API_KEY and DEFAULT_TTS_VOICE_ID do not, so you'll
-// need to add them. See the bottom of this file for the exact lines to
-// add to config.ts.
+//   docker run -d --name kokoro -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest
+//
+// (CPU image is fine for this use case — a couple sentences of commentary
+// every few tracks is nowhere near enough volume to need a GPU. Swap to
+// the -gpu image tag later if you ever want faster cold-starts.)
 
 import {inject, injectable} from 'inversify';
 import {createWriteStream, existsSync, mkdirSync} from 'fs';
@@ -23,38 +25,36 @@ export default class DjTts {
   private readonly cacheDir: string;
 
   constructor(@inject(TYPES.Config) private readonly config: Config) {
-    // Reuse Muse's existing DATA_DIR convention rather than a new mount.
     this.cacheDir = join(this.config.DATA_DIR, 'dj-tts-cache');
     if (!existsSync(this.cacheDir)) {
       mkdirSync(this.cacheDir, {recursive: true});
     }
   }
 
-  /** Renders text to a cached mp3 file, returning its path. */
+  /** Renders text to a cached mp3 file via the self-hosted Kokoro server, returning the path. */
   async renderToFile(text: string, voiceId?: string | null): Promise<string> {
-    const key = crypto.createHash('sha256').update(`${voiceId ?? 'default'}:${text}`).digest('hex');
+    const voice = voiceId ?? this.config.KOKORO_VOICE;
+    const key = crypto.createHash('sha256').update(`${voice}:${text}`).digest('hex');
     const filePath = join(this.cacheDir, `${key}.mp3`);
 
     if (existsSync(filePath)) {
       return filePath;
     }
 
-    const voice = voiceId ?? this.config.DEFAULT_TTS_VOICE_ID;
-    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}/stream`, {
+    const res = await fetch(`${this.config.KOKORO_BASE_URL}/v1/audio/speech`, {
       method: 'POST',
-      headers: {
-        'xi-api-key': this.config.ELEVENLABS_API_KEY,
-        'Content-Type': 'application/json',
-      },
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        text,
-        model_id: 'eleven_turbo_v2_5',
-        voice_settings: {stability: 0.4, similarity_boost: 0.8},
+        model: 'kokoro',
+        input: text,
+        voice,
+        response_format: 'mp3',
+        speed: 1.0,
       }),
     });
 
     if (!res.ok || !res.body) {
-      throw new Error(`TTS request failed: ${res.status} ${res.statusText}`);
+      throw new Error(`Kokoro TTS request failed: ${res.status} ${res.statusText}`);
     }
 
     const {Readable} = await import('stream');
