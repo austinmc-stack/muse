@@ -28,6 +28,8 @@ const CONFIG_MAP = {
   BOT_ACTIVITY: process.env.BOT_ACTIVITY ?? 'music',
   ENABLE_SPONSORBLOCK: process.env.ENABLE_SPONSORBLOCK === 'true',
   SPONSORBLOCK_TIMEOUT: parseInt(process.env.SPONSORBLOCK_TIMEOUT ?? '5', 10),
+  ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY ?? '',
+  DEFAULT_TTS_VOICE_ID: process.env.DEFAULT_TTS_VOICE_ID ?? '',
   YT_DLP_PATH: firstNonEmpty(process.env.YT_DLP_PATH, process.env.MUSE_BUNDLED_YT_DLP_PATH) ?? 'yt-dlp',
   YT_DLP_AUTO_UPDATE: process.env.YT_DLP_AUTO_UPDATE === 'true',
 } as const;
@@ -55,6 +57,8 @@ export default class Config {
   readonly BOT_ACTIVITY!: string;
   readonly ENABLE_SPONSORBLOCK!: boolean;
   readonly SPONSORBLOCK_TIMEOUT!: number;
+  readonly ELEVENLABS_API_KEY!: string;
+  readonly DEFAULT_TTS_VOICE_ID!: string;  
   readonly YT_DLP_PATH!: string;
   readonly YT_DLP_AUTO_UPDATE!: boolean;
 
