@@ -1,0 +1,83 @@
+services:
+  services:
+  muse:
+    image: .
+    restart: unless-stopped
+    volumes:
+      - ./muse:/data
+    environment:
+      - DISCORD_TOKEN=
+      - YOUTUBE_API_KEY=
+      - SPOTIFY_CLIENT_ID=
+      - SPOTIFY_CLIENT_SECRET=
+    depends_on:
+      [kokoro, ollama, db]:
+        condition: service_healthy
+      
+  kokoro:
+   image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+   restart: unless-stopped
+   # port: 8880
+   # CPU image is plenty for "say one short sentence every few tracks."
+   # Switch to ghcr.io/remsky/kokoro-fastapi-gpu:latest if you have an
+   # NVIDIA GPU free and want near-instant cold starts, but it's optional.
+   # No `ports:` needed unless you want to hit it directly for testing
+   # outside the compose network.
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    # Same story — CPU inference on a 3B model is fine for short DJ lines.
+    # Uncomment below only if you have an NVIDIA GPU and the nvidia-container-toolkit installed:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu] 
+ 
+# ---------------------------------------------------------------------
+# One-time setup after `docker compose up -d kokoro ollama`:
+# ---------------------------------------------------------------------
+#   docker compose exec ollama ollama pull llama3.2:3b
+#
+# This downloads ~2GB once; it's cached in the ollama-models volume and
+# survives container restarts/rebuilds. Kokoro's weights (~300MB) are
+# baked into its image already, so no separate pull step is needed there
+# — just expect a slightly slower first request after a fresh container
+# start while it warms up.
+
+db:
+    image: postgres:15-alpine
+    container_name: muse-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-muse}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-muse}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - muse-network
+
+networks:
+  muse-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  ollama-models:
+
+
+   
+
+ 
+
