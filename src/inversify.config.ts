@@ -4,6 +4,9 @@ import {TYPES} from './types.js';
 import Bot from './bot.js';
 import {Client, GatewayIntentBits} from 'discord.js';
 import ConfigProvider from './services/config.js';
+import DjTts from './services/dj-tts.js';
+import DjCommentary from './services/dj-commentary.js';
+import DjRecommender from './services/dj-recommender.js';
 
 // Managers
 import PlayerManager from './managers/player.js';
@@ -64,6 +67,9 @@ container.bind(TYPES.Config).toConstantValue(new ConfigProvider());
 container.bind<GetSongs>(TYPES.Services.GetSongs).to(GetSongs).inSingletonScope();
 container.bind<AddQueryToQueue>(TYPES.Services.AddQueryToQueue).to(AddQueryToQueue).inSingletonScope();
 container.bind<YoutubeAPI>(TYPES.Services.YoutubeAPI).to(YoutubeAPI).inSingletonScope();
+container.bind<DjTts>(TYPES.Services.DjTts).to(DjTts).inSingletonScope();
+container.bind<DjCommentary>(TYPES.Services.DjCommentary).to(DjCommentary).inSingletonScope();
+container.bind<DjRecommender>(TYPES.Services.DjRecommender).to(DjRecommender).inSingletonScope();
 
 // Only instanciate spotify dependencies if the Spotify client ID and secret are set
 const config = container.get<ConfigProvider>(TYPES.Config);
@@ -77,6 +83,7 @@ if (config.SPOTIFY_CLIENT_ID !== '' && config.SPOTIFY_CLIENT_SECRET !== '') {
   Clear,
   Config,
   Disconnect,
+  Dj,
   Favorites,
   ForwardSeek,
   LoopQueue,
