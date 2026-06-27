@@ -1,29 +1,49 @@
 services:
-  services:
   muse:
-    image: https://github.com/austinmc-stack/muse:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     volumes:
       - ./muse:/data
     environment:
-      - DISCORD_TOKEN=
-      - YOUTUBE_API_KEY=
-      - SPOTIFY_CLIENT_ID=
-      - SPOTIFY_CLIENT_SECRET=
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-muse}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-muse}
+      - KOKORO_BASE_URL=http://kokoro:8880
+      - OLLAMA_BASE_URL=http://ollama:11434
     depends_on:
-      [kokoro, ollama, db]:
+      kokoro:
         condition: service_healthy
-      
+      ollama:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    networks:
+      - muse-network
+
   kokoro:
-   image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
-   restart: unless-stopped
-   mem_limit: 2g
-   # port: 8880
-   # CPU image is plenty for "say one short sentence every few tracks."
-   # Switch to ghcr.io/remsky/kokoro-fastapi-gpu:latest if you have an
-   # NVIDIA GPU free and want near-instant cold starts, but it's optional.
-   # No `ports:` needed unless you want to hit it directly for testing
-   # outside the compose network.
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    restart: unless-stopped
+    mem_limit: 2g
+    # CPU image is plenty for "say one short sentence every few tracks."
+    # Switch to ghcr.io/remsky/kokoro-fastapi-gpu:latest if you have an
+    # NVIDIA GPU free and want near-instant cold starts, but it's optional.
+    # No `ports:` needed unless you want to hit it directly for testing
+    # outside the compose network.
+    healthcheck:
+      # Kokoro's image ships curl (confirmed: a past release specifically
+      # added it for this exact healthcheck), and exposes a real /health
+      # endpoint -- unlike Ollama's image, this one is safe to curl.
+      test: ["CMD", "curl", "-f", "http://localhost:8880/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - muse-network
 
   ollama:
     image: ollama/ollama:latest
@@ -33,6 +53,18 @@ services:
       - OLLAMA_KEEP_ALIVE=60s
     volumes:
       - ollama-models:/root/.ollama
+    healthcheck:
+      # The official ollama/ollama image does NOT ship curl or wget
+      # (open upstream issue, ollama/ollama#9781) -- a curl-based
+      # healthcheck here would permanently report "unhealthy" even
+      # though Ollama is running fine, which would block `muse` from
+      # ever starting since it depends_on service_healthy. `ollama list`
+      # uses the bundled CLI binary instead, so it has no missing-tool risk.
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     # Same story — CPU inference on a 3B model is fine for short DJ lines.
     # Uncomment below only if you have an NVIDIA GPU and the nvidia-container-toolkit installed:
     # deploy:
@@ -41,20 +73,11 @@ services:
     #       devices:
     #         - driver: nvidia
     #           count: 1
-    #           capabilities: [gpu] 
- 
-# ---------------------------------------------------------------------
-# One-time setup after `docker compose up -d kokoro ollama`:
-# ---------------------------------------------------------------------
-#   docker compose exec ollama ollama pull llama3.2:3b
-#
-# This downloads ~2GB once; it's cached in the ollama-models volume and
-# survives container restarts/rebuilds. Kokoro's weights (~300MB) are
-# baked into its image already, so no separate pull step is needed there
-# — just expect a slightly slower first request after a fresh container
-# start while it warms up.
+    #           capabilities: [gpu]
+    networks:
+      - muse-network
 
-db:
+  db:
     image: postgres:15-alpine
     container_name: muse-db
     restart: unless-stopped
@@ -80,8 +103,13 @@ volumes:
   postgres_data:
   ollama-models:
 
-
-   
-
- 
-
+# ---------------------------------------------------------------------
+# One-time setup after `docker compose up -d kokoro ollama`:
+# ---------------------------------------------------------------------
+#   docker compose exec ollama ollama pull llama3.2:3b
+#
+# This downloads ~2GB once; it's cached in the ollama-models volume and
+# survives container restarts/rebuilds. Kokoro's weights (~300MB) are
+# baked into its image already, so no separate pull step is needed there
+# — just expect a slightly slower first request after a fresh container
+# start while it warms up.
