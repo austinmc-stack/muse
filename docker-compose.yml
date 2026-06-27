@@ -1,7 +1,7 @@
 services:
   services:
   muse:
-    image: .
+    image: https://github.com/austinmc-stack/muse:latest
     restart: unless-stopped
     volumes:
       - ./muse:/data
