@@ -17,6 +17,7 @@ services:
   kokoro:
    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
    restart: unless-stopped
+   mem_limit: 2g
    # port: 8880
    # CPU image is plenty for "say one short sentence every few tracks."
    # Switch to ghcr.io/remsky/kokoro-fastapi-gpu:latest if you have an
@@ -27,6 +28,9 @@ services:
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
+    mem_limit: 4g
+    environment:
+      - OLLAMA_KEEP_ALIVE=60s
     volumes:
       - ollama-models:/root/.ollama
     # Same story — CPU inference on a 3B model is fine for short DJ lines.
