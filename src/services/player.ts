@@ -92,7 +92,13 @@ export default class {
   private readonly channelToSpeakingUsers: Map<string, Set<string>> = new Map();
   private hasRegisteredVoiceActivityListener = false;
 
-  constructor(fileCache: FileCacheProvider, guildId: string) {
+  constructor(
+    fileCache: FileCacheProvider,
+    guildId: string,
+    private readonly djTts?: DjTts,
+    private readonly djCommentary?: DjCommentary,
+    private readonly djRecommender?: DjRecommender,
+  ) {
     this.fileCache = fileCache;
     this.guildId = guildId;
   }
