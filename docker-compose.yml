@@ -25,19 +25,35 @@ services:
     networks:
       - muse-network
 
+  dj-worker:
+    # Reuses the exact same image as `muse` -- no separate Dockerfile
+    # needed, since refresh-dj-cooccurrence.js only needs @prisma/client
+    # and DATABASE_URL, both already baked into / passed to this image.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["sh", "-c", "sleep 60 && while true; do node dist/scripts/refresh-dj-cooccurrence.js; sleep 900; done"]
+    # The initial `sleep 60` gives `muse` a head start to run its `db push`
+    # and create the DJ tables before this service's first query -- belt
+    # and suspenders alongside depends_on below, since service_started
+    # only means the muse CONTAINER started, not that db push finished
+    # inside it. Refresh runs every 15 minutes (900s) after that.
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-muse}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-muse}
+    depends_on:
+      muse:
+        condition: service_started
+      db:
+        condition: service_healthy
+    networks:
+      - muse-network
+
   kokoro:
     image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
     restart: unless-stopped
     mem_limit: 2g
-    # CPU image is plenty for "say one short sentence every few tracks."
-    # Switch to ghcr.io/remsky/kokoro-fastapi-gpu:latest if you have an
-    # NVIDIA GPU free and want near-instant cold starts, but it's optional.
-    # No `ports:` needed unless you want to hit it directly for testing
-    # outside the compose network.
     healthcheck:
-      # Kokoro's image ships curl (confirmed: a past release specifically
-      # added it for this exact healthcheck), and exposes a real /health
-      # endpoint -- unlike Ollama's image, this one is safe to curl.
       test: ["CMD", "curl", "-f", "http://localhost:8880/health"]
       interval: 10s
       timeout: 5s
@@ -55,26 +71,11 @@ services:
     volumes:
       - ollama-models:/root/.ollama
     healthcheck:
-      # The official ollama/ollama image does NOT ship curl or wget
-      # (open upstream issue, ollama/ollama#9781) -- a curl-based
-      # healthcheck here would permanently report "unhealthy" even
-      # though Ollama is running fine, which would block `muse` from
-      # ever starting since it depends_on service_healthy. `ollama list`
-      # uses the bundled CLI binary instead, so it has no missing-tool risk.
       test: ["CMD", "ollama", "list"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-    # Same story — CPU inference on a 3B model is fine for short DJ lines.
-    # Uncomment below only if you have an NVIDIA GPU and the nvidia-container-toolkit installed:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
     networks:
       - muse-network
 
@@ -103,14 +104,3 @@ networks:
 volumes:
   postgres_data:
   ollama-models:
-
-# ---------------------------------------------------------------------
-# One-time setup after `docker compose up -d kokoro ollama`:
-# ---------------------------------------------------------------------
-#   docker compose exec ollama ollama pull llama3.2:3b
-#
-# This downloads ~2GB once; it's cached in the ollama-models volume and
-# survives container restarts/rebuilds. Kokoro's weights (~300MB) are
-# baked into its image already, so no separate pull step is needed there
-# — just expect a slightly slower first request after a fresh container
-# start while it warms up.
