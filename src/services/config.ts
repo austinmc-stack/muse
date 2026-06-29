@@ -30,6 +30,8 @@ const CONFIG_MAP = {
   SPONSORBLOCK_TIMEOUT: parseInt(process.env.SPONSORBLOCK_TIMEOUT ?? '5', 10),
   KOKORO_BASE_URL: process.env.KOKORO_BASE_URL ?? 'http://kokoro:8880',
   KOKORO_VOICE: process.env.KOKORO_VOICE ?? 'af_heart',
+  OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL ?? 'http://ollama:11434',
+  OLLAMA_MODEL: process.env.OLLAMA_MODEL ?? 'llama3.2:3b',
   YT_DLP_PATH: firstNonEmpty(process.env.YT_DLP_PATH, process.env.MUSE_BUNDLED_YT_DLP_PATH) ?? 'yt-dlp',
   YT_DLP_AUTO_UPDATE: process.env.YT_DLP_AUTO_UPDATE === 'true',
 } as const;
@@ -59,6 +61,8 @@ export default class Config {
   readonly SPONSORBLOCK_TIMEOUT!: number;
   readonly KOKORO_BASE_URL!: string;
   readonly KOKORO_VOICE!: string;  
+  readonly OLLAMA_BASE_URL!: string;
+  readonly OLLAMA_MODEL!: string;
   readonly YT_DLP_PATH!: string;
   readonly YT_DLP_AUTO_UPDATE!: boolean;
 
