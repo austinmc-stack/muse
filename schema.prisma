@@ -49,3 +49,55 @@ model FavoriteQuery {
 
   @@unique([guildId, name])
 }
+
+model DjSetting {
+  guildId               String   @id
+  enabled               Boolean  @default(false)
+  commentaryEnabled     Boolean  @default(true)
+  commentaryFrequency   Int      @default(1)   // talk every N tracks
+  voiceId               String?
+  persona               String   @default("hype")
+  minQueueSize          Int      @default(2)   // auto-fill trigger threshold
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+// One row per track actually played in a guild, keyed by YouTube
+// video ID (song.url in Muse's SongMetadata) since that's the only
+// stable identifier Muse already has for a track — there is no
+// separate "Track" entity in Muse today.
+model PlayHistory {
+  id          Int      @id @default(autoincrement())
+  guildId     String
+  youtubeId   String   // song.url
+  title       String
+  artist      String
+  requestedBy String?  // discord user id; null if auto-queued by DJ
+  wasDjPick   Boolean  @default(false)
+  skipped     Boolean  @default(false)
+  playedAt    DateTime @default(now())
+
+  @@index([guildId, playedAt])
+  @@index([youtubeId])
+}
+
+// Precomputed co-occurrence, refreshed periodically rather than
+// computed live on every recommendation (see scripts/refresh-dj-cooccurrence.ts).
+model TrackCooccurrence {
+  youtubeIdA  String
+  youtubeIdB  String
+  score       Float    @default(0)
+  sampleSize  Int      @default(0)
+  updatedAt   DateTime @updatedAt
+
+  @@id([youtubeIdA, youtubeIdB])
+  @@index([youtubeIdA, score])
+}
+
+model DjCommentaryLog {
+  id        Int      @id @default(autoincrement())
+  guildId   String
+  youtubeId String?
+  text      String
+  createdAt DateTime @default(now())
+}
