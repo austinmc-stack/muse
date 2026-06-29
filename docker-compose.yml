@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    command: ["sh", "-c", "npx prisma db push --accept-data-loss && node --enable-source-maps dist/scripts/migrate-and-start.js"]
     restart: unless-stopped
     volumes:
       - ./muse:/data
