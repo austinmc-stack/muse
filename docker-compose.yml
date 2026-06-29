@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["sh", "-c", "echo '=== RUNNING DB PUSH ===' && npx prisma db push --accept-data-loss && echo '=== DB PUSH DONE, STARTING BOT ===' && node --enable-source-maps dist/index.js && echo '=== BOT EXITED CLEANLY ==='"]
+    command: ["sh", "-c", "echo '=== RUNNING DB PUSH ===' && npx prisma db push --accept-data-loss && echo '=== DB PUSH DONE, STARTING BOT ===' && node --enable-source-maps dist/scripts/start.js"]
     restart: unless-stopped
     volumes:
       - ./muse:/data
