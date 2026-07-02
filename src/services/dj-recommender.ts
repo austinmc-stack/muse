@@ -103,7 +103,35 @@ export default class DjRecommender {
     const ranked = [...candidates.values()].sort((a, b) => b.score - a.score);
 
     if (ranked.length === 0) {
-      throw new Error('no candidates found — cooccurrence table may be empty or catalog too small');
+      // Co-occurrence and same-artist signals both came up empty. This happens
+      // when the most recently played tracks haven't formed co-occurrence pairs
+      // yet (e.g. played in a session > 1hr after everything else, so the
+      // hour-window never grouped them with anything). Confirmed real case.
+      //
+      // Fallback: pick randomly from the guild's full play history, excluding
+      // the last 10 played tracks to avoid immediate repeats. Gets smarter
+      // automatically as history and co-occurrence data accumulates.
+      const fallbackPool = await prisma.playHistory.findMany({
+        where: {
+          guildId,
+          skipped: false,
+          youtubeId: {notIn: [...alreadyPlayed]},
+        },
+        distinct: ['youtubeId'],
+        orderBy: {playedAt: 'desc'},
+        take: 50,
+      });
+
+      if (fallbackPool.length === 0) {
+        throw new Error('no candidates found and fallback pool is empty — not enough unique tracks in history yet');
+      }
+
+      const shuffled = [...fallbackPool].sort(() => Math.random() - 0.5);
+      return shuffled.slice(0, count).map(row => ({
+        youtubeId: row.youtubeId,
+        title: row.title,
+        artist: row.artist,
+      }));
     }
 
     return weightedSample(ranked, count).map(c => c.track);
