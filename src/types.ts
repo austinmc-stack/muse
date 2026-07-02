@@ -17,5 +17,8 @@ export const TYPES = {
     DjTts: Symbol('DjTts'),
     DjCommentary: Symbol('DjCommentary'),
     DjRecommender: Symbol('DjRecommender'),
+    WrappedTracker: Symbol('WrappedTracker'),
+    WrappedService: Symbol('WrappedService'),
+    WrappedCardRenderer: Symbol('WrappedCardRenderer'),
   },
 };
