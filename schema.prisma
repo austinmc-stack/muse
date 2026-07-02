@@ -76,9 +76,12 @@ model PlayHistory {
   wasDjPick   Boolean  @default(false)
   skipped     Boolean  @default(false)
   playedAt    DateTime @default(now())
+  msPlayed    Int?     // actual listened duration in ms; null if unknown
+  durationMs  Int?     // the track's total length in ms, for completion %
 
   @@index([guildId, playedAt])
   @@index([youtubeId])
+  @@index([requestedBy, playedAt])
 }
 
 // Precomputed co-occurrence, refreshed periodically rather than
@@ -100,4 +103,15 @@ model DjCommentaryLog {
   youtubeId String?
   text      String
   createdAt DateTime @default(now())
+}
+
+// Caches Spotify genre lookups by artist name, since YouTube gives
+// no genre data at all. Looked up once per artist (not per track,
+// since Spotify's genre data is attached to artists, not tracks),
+// cached indefinitely — genres don't meaningfully change often enough
+// to bother expiring this.
+model ArtistGenreCache {
+  artist    String   @id
+  genres    String[] // Postgres native array type
+  fetchedAt DateTime @default(now())
 }
