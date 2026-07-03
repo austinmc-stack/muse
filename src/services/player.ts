@@ -29,6 +29,7 @@ import DjTts from './dj-tts.js';
 import DjCommentary from './dj-commentary.js';
 import DjRecommender from './dj-recommender.js';
 import {getDjSettings} from '../utils/get-dj-settings.js';
+import WrappedTracker from './wrapped-tracker.js';
 
 export enum MediaSource {
   Youtube,
@@ -98,6 +99,7 @@ export default class {
     private readonly djTts?: DjTts,
     private readonly djCommentary?: DjCommentary,
     private readonly djRecommender?: DjRecommender,
+    private readonly wrappedTracker?: WrappedTracker,
   ) {
     this.fileCache = fileCache;
     this.guildId = guildId;
@@ -280,6 +282,28 @@ export default class {
         }).catch(error => debug('Failed to record DJ play history:', error));
       }
 
+      if (this.wrappedTracker) {
+        this.currentTrackStartedAt = Date.now();
+        // Fire-and-forget: finds the row DjRecommender.recordPlay just
+        // wrote and stashes the track's total length on it. Runs after
+        // a microtask delay isn't needed -- recordPlay's INSERT above
+        // is awaited via the .catch() chain, but since both calls
+        // target the same guildId+youtubeId+"most recent row", a tiny
+        // race is possible if recordPlay's write is still in flight.
+        // In practice this is a single fast INSERT on a local/Docker-
+        // network Postgres, so in testing this lands fine, but if you
+        // ever see durationMs not getting set, await djRecommender's
+        // recordPlay() directly instead of leaving it fire-and-forget
+        // (it's currently `void`'d a few lines above this).
+        void this.wrappedTracker.setTrackDuration(
+          this.guildId,
+          currentSong.url,
+          currentSong.length * 1000, // QueuedSong.length is in SECONDS
+        ).then(id => {
+          this.currentPlayHistoryId = id;
+        }).catch(error => debug('Failed to set track duration for Wrapped:', error));
+      }
+
       if (currentSong.url === this.lastSongURL) {
         this.startTrackingPosition();
       } else {
@@ -394,6 +418,7 @@ export default class {
   }
 
   manualForward(skip: number): void {
+    this.recordListenedDurationIfTracking();
     if (this.canGoForward(skip)) {
       this.queuePosition += skip;
       this.positionInSeconds = 0;
@@ -678,6 +703,7 @@ export default class {
       }
 
       const previousSong = this.getCurrent();
+      this.recordListenedDurationIfTracking();
       await this.forward(1);
       const currentSong = this.getCurrent();
       if (!currentSong) {
@@ -788,6 +814,8 @@ export default class {
   }
 
   private djTrackCounter = 0;
+  private currentPlayHistoryId: number | null = null;
+  private currentTrackStartedAt: number | null = null;
 
    private async maybeAnnounce(song: QueuedSong, previous: QueuedSong | null): Promise<void> {
     if (!this.djTts || !this.djCommentary || !this.voiceConnection) {
@@ -840,6 +868,18 @@ export default class {
       // Never let a TTS/commentary failure block actual music playback.
       debug('DJ commentary failed, continuing without it:', error);
     }
+  }
+
+  private recordListenedDurationIfTracking(): void {
+    if (!this.wrappedTracker || this.currentPlayHistoryId === null || this.currentTrackStartedAt === null) {
+      return;
+    }
+ 
+    const msPlayed = Date.now() - this.currentTrackStartedAt;
+    void this.wrappedTracker.recordListenedDuration(this.currentPlayHistoryId, msPlayed);
+ 
+    this.currentPlayHistoryId = null;
+    this.currentTrackStartedAt = null;
   }
   
   private async maybeAutoQueue(): Promise<void> {
