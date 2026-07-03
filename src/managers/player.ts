@@ -5,6 +5,7 @@ import FileCacheProvider from '../services/file-cache.js';
 import DjTts from '../services/dj-tts.js';
 import DjCommentary from '../services/dj-commentary.js';
 import DjRecommender from '../services/dj-recommender.js';
+import WrappedTracker from '../services/wrapped-tracker.js';
  
 @injectable()
 export default class {
@@ -16,6 +17,7 @@ export default class {
     @inject(TYPES.Services.DjTts) private readonly djTts: DjTts,
     @inject(TYPES.Services.DjCommentary) private readonly djCommentary: DjCommentary,
     @inject(TYPES.Services.DjRecommender) private readonly djRecommender: DjRecommender,
+    @inject(TYPES.Services.WrappedTracker) private readonly wrappedTracker: WrappedTracker,
   ) {
     this.guildPlayers = new Map();
     this.fileCache = fileCache;
@@ -25,7 +27,7 @@ export default class {
     let player = this.guildPlayers.get(guildId);
  
     if (!player) {
-      player = new Player(this.fileCache, guildId, this.djTts, this.djCommentary, this.djRecommender);
+      player = new Player(this.fileCache, guildId, this.djTts, this.djCommentary, this.djRecommender, this.wrappedTracker);
  
       this.guildPlayers.set(guildId, player);
     }
