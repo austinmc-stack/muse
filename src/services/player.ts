@@ -696,22 +696,27 @@ export default class {
 
     if (newState.status === AudioPlayerStatus.Idle && this.status === STATUS.PLAYING) {
       await this.maybeAutoQueue();
-      
+    
       if (!this.canGoForward(1)) {
         await this.finishQueue();
         return;
       }
-
+    
       const previousSong = this.getCurrent();
       this.recordListenedDurationIfTracking();
-      await this.forward(1);
+    
+      // Peek at the next song BEFORE forward() starts playback,
+      // so commentary plays in the gap between tracks, not over the music.
+      const upcomingSong = this.getQueue()[0] ?? null;
+      await this.maybeAnnounce(upcomingSong, previousSong);
+    
+      await this.forward(1);  // ← now starts playback AFTER commentary finishes
+    
       const currentSong = this.getCurrent();
       if (!currentSong) {
         return;
       }
-
-      await this.maybeAnnounce(currentSong, previousSong);
-      
+    
       // Auto announce the next song if configured to
       const settings = await getGuildSettings(this.guildId);
       const {autoAnnounceNextSong} = settings;
@@ -720,8 +725,7 @@ export default class {
           embeds: [buildPlayingMessageEmbed(this)],
         });
       }
-    }
-  }
+        }
 
   private async finishQueue(): Promise<void> {
     this.status = STATUS.IDLE;
@@ -817,8 +821,8 @@ export default class {
   private currentPlayHistoryId: number | null = null;
   private currentTrackStartedAt: number | null = null;
 
-   private async maybeAnnounce(song: QueuedSong, previous: QueuedSong | null): Promise<void> {
-    if (!this.djTts || !this.djCommentary || !this.voiceConnection) {
+   private async maybeAnnounce(song: QueuedSong | null, previous: QueuedSong | null): Promise<void> {
+    if (!song || !this.djTts || !this.djCommentary || !this.voiceConnection) {
       return;
     }
   
