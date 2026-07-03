@@ -7,6 +7,10 @@ import ConfigProvider from './services/config.js';
 import DjTts from './services/dj-tts.js';
 import DjCommentary from './services/dj-commentary.js';
 import DjRecommender from './services/dj-recommender.js';
+import WrappedTracker from './services/wrapped-tracker.js';
+import WrappedService from './services/wrapped-service.js';
+import WrappedCardRenderer from './services/wrapped-card-renderer.js';
+import Wrapped from './commands/wrapped.js';
  
 // Managers
 import PlayerManager from './managers/player.js';
@@ -71,6 +75,9 @@ container.bind<YoutubeAPI>(TYPES.Services.YoutubeAPI).to(YoutubeAPI).inSingleton
 container.bind<DjTts>(TYPES.Services.DjTts).to(DjTts).inSingletonScope();
 container.bind<DjCommentary>(TYPES.Services.DjCommentary).to(DjCommentary).inSingletonScope();
 container.bind<DjRecommender>(TYPES.Services.DjRecommender).to(DjRecommender).inSingletonScope();
+container.bind<WrappedTracker>(TYPES.Services.WrappedTracker).to(WrappedTracker).inSingletonScope();
+container.bind<WrappedService>(TYPES.Services.WrappedService).to(WrappedService).inSingletonScope();
+container.bind<WrappedCardRenderer>(TYPES.Services.WrappedCardRenderer).to(WrappedCardRenderer).inSingletonScope();
  
 // Only instanciate spotify dependencies if the Spotify client ID and secret are set
 const config = container.get<ConfigProvider>(TYPES.Config);
@@ -104,6 +111,7 @@ if (config.SPOTIFY_CLIENT_ID !== '' && config.SPOTIFY_CLIENT_SECRET !== '') {
   Stop,
   Unskip,
   Volume,
+  Wrapped,
 ].forEach(command => {
   container.bind<Command>(TYPES.Command).to(command).inSingletonScope();
 });
