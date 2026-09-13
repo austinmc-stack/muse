@@ -9,10 +9,6 @@ const prisma = new PrismaClient();
 
 const DEFAULTS: Omit<DjSetting, 'guildId' | 'createdAt' | 'updatedAt'> = {
   enabled: false,
-  commentaryEnabled: true,
-  commentaryFrequency: 1,
-  voiceId: null,
-  persona: 'hype',
   minQueueSize: 2,
 };
 

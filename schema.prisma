@@ -53,10 +53,6 @@ model FavoriteQuery {
 model DjSetting {
   guildId               String   @id
   enabled               Boolean  @default(false)
-  commentaryEnabled     Boolean  @default(true)
-  commentaryFrequency   Int      @default(1)   // talk every N tracks
-  voiceId               String?
-  persona               String   @default("hype")
   minQueueSize          Int      @default(2)   // auto-fill trigger threshold
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -95,14 +91,6 @@ model TrackCooccurrence {
 
   @@id([youtubeIdA, youtubeIdB])
   @@index([youtubeIdA, score])
-}
-
-model DjCommentaryLog {
-  id        Int      @id @default(autoincrement())
-  guildId   String
-  youtubeId String?
-  text      String
-  createdAt DateTime @default(now())
 }
 
 // Caches Spotify genre lookups by artist name, since YouTube gives

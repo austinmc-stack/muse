@@ -1,6 +1,7 @@
 import getYouTubeID from 'get-youtube-id';
 import {EmbedBuilder} from 'discord.js';
 import Player, {MediaSource, QueuedSong, STATUS} from '../services/player.js';
+import type {RecommendedTrack} from '../services/dj-recommender.js';
 import getProgressBar from './get-progress-bar.js';
 import {prettyTime} from './time.js';
 import {truncate} from './string.js';
@@ -79,6 +80,16 @@ export const buildPlayingMessageEmbed = (player: Player): EmbedBuilder => {
   }
 
   return message;
+};
+
+export const buildDjAddedSongsEmbed = (picks: RecommendedTrack[]): EmbedBuilder => {
+  const description = picks
+    .map(pick => `[${pick.title}](https://www.youtube.com/watch?v=${pick.youtubeId}) — ${pick.artist}`)
+    .join('\n');
+
+  return new EmbedBuilder()
+    .setColor('DarkPurple')
+    .setDescription(`🎧 **DJ added to the queue**\n${description}`);
 };
 
 export const buildQueueEmbed = (player: Player, page: number, pageSize: number): EmbedBuilder => {

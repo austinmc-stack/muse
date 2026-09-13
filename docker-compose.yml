@@ -13,13 +13,7 @@ services:
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
       - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-muse}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-muse}
-      - KOKORO_BASE_URL=http://kokoro:8880
-      - OLLAMA_BASE_URL=http://ollama:11434
     depends_on:
-      kokoro:
-        condition: service_healthy
-      ollama:
-        condition: service_healthy
       db:
         condition: service_healthy
     networks:
@@ -49,36 +43,6 @@ services:
     networks:
       - muse-network
 
-  kokoro:
-    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
-    restart: unless-stopped
-    mem_limit: 2g
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8880/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    networks:
-      - muse-network
-
-  ollama:
-    image: ollama/ollama:latest
-    restart: unless-stopped
-    mem_limit: 4g
-    environment:
-      - OLLAMA_KEEP_ALIVE=60s
-    volumes:
-      - ollama-models:/root/.ollama
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    networks:
-      - muse-network
-
   db:
     image: postgres:15-alpine
     container_name: muse-db
@@ -104,4 +68,3 @@ networks:
 
 volumes:
   postgres_data:
-  ollama-models:

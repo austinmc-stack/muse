@@ -35,12 +35,10 @@ import {getGuildSettings} from '../utils/get-guild-settings.js';
 import {buildPlayingMessageEmbed} from '../utils/build-embed.js';
 import {getSoundCloudMediaSource, getYouTubeMediaSource, YtDlpMediaUnavailableError} from '../utils/yt-dlp.js';
 import {Setting} from '@prisma/client';
-import {createReadStream as fsCreateReadStream} from 'fs';
-import DjTts from './dj-tts.js';
-import DjCommentary from './dj-commentary.js';
 import DjRecommender from './dj-recommender.js';
 import {getDjSettings} from '../utils/get-dj-settings.js';
 import WrappedTracker from './wrapped-tracker.js';
+import {buildDjAddedSongsEmbed} from '../utils/build-embed.js';
 
 export {DEFAULT_VOLUME, MediaSource, STATUS};
 export type {AgeRestrictedFallbackResolver, PlayerEvents, QueuedPlaylist, QueuedSong, SongMetadata};
@@ -132,8 +130,6 @@ export default class {
     fileCache: FileCacheProvider,
     guildId: string,
     ageRestrictedFallbackResolver?: AgeRestrictedFallbackResolver,
-    private readonly djTts?: DjTts,
-    private readonly djCommentary?: DjCommentary,
     private readonly djRecommender?: DjRecommender,
     private readonly wrappedTracker?: WrappedTracker,
   ) {
@@ -1030,22 +1026,16 @@ export default class {
 
     if (newState.status === AudioPlayerStatus.Idle && this.status === STATUS.PLAYING) {
       await this.maybeAutoQueue();
-    
+
       if (!this.canGoForward(1)) {
         await this.finishQueue();
         return;
       }
-    
-      const previousSong = this.getCurrent();
+
       this.recordListenedDurationIfTracking();
-    
-      // Peek at the next song BEFORE forward() starts playback,
-      // so commentary plays in the gap between tracks, not over the music.
-      const upcomingSong = this.getQueue()[0] ?? null;
-      await this.maybeAnnounce(upcomingSong, previousSong);
-    
-      await this.forward(1);  // ← now starts playback AFTER commentary finishes
-    
+
+      await this.forward(1);
+
       const currentSong = this.getCurrent();
       if (!currentSong) {
         return;
@@ -1292,62 +1282,8 @@ export default class {
     this.audioResource?.volume?.setVolume((level ?? this.getVolume()) / 100);
   }
 
-  private djTrackCounter = 0;
   private currentPlayHistoryId: number | null = null;
   private currentTrackStartedAt: number | null = null;
-
-   private async maybeAnnounce(song: QueuedSong | null, previous: QueuedSong | null): Promise<void> {
-    if (!song || !this.djTts || !this.djCommentary || !this.voiceConnection) {
-      return;
-    }
-  
-    const settings = await getDjSettings(this.guildId);
-    if (!settings.enabled || !settings.commentaryEnabled) {
-      return;
-    }
-  
-    this.djTrackCounter++;
-    if (this.djTrackCounter % settings.commentaryFrequency !== 0) {
-      return;
-    }
-  
-    try {
-      const text = await this.djCommentary.generateAndLog(this.guildId, song.url, {
-        upcomingTitle: song.title,
-        upcomingArtist: song.artist,
-        previousTitle: previous?.title,
-        previousArtist: previous?.artist,
-        persona: settings.persona,
-      });
-  
-      const filePath = await this.djTts.renderToFile(text, settings.voiceId);
-  
-      await new Promise<void>((resolve, reject) => {
-        const introPlayer = createAudioPlayer();
-        const resource = createAudioResource(fsCreateReadStream(filePath));
-  
-        introPlayer.once(AudioPlayerStatus.Idle, () => {
-          introPlayer.stop(true);
-          resolve();
-        });
-        introPlayer.once('error', (err: Error) => {
-          introPlayer.stop(true);
-          reject(err);
-        });
-  
-        this.voiceConnection!.subscribe(introPlayer);
-        introPlayer.play(resource);
-      });
-  
-      // Hand the connection back to the main audio player for the track.
-      if (this.audioPlayer) {
-        this.voiceConnection.subscribe(this.audioPlayer);
-      }
-    } catch (error) {
-      // Never let a TTS/commentary failure block actual music playback.
-      debug('DJ commentary failed, continuing without it:', error);
-    }
-  }
 
   private recordListenedDurationIfTracking(): void {
     if (!this.wrappedTracker || this.currentPlayHistoryId === null || this.currentTrackStartedAt === null) {
@@ -1377,7 +1313,7 @@ export default class {
   
     try {
       const picks = await this.djRecommender.recommendNext(this.guildId, settings.minQueueSize);
-  
+
       for (const pick of picks) {
         this.add({
           title: pick.title,
@@ -1391,6 +1327,12 @@ export default class {
           source: MediaSource.Youtube,
           addedInChannelId: '', // no channel context for DJ auto-picks
           requestedBy: 'dj',
+        });
+      }
+
+      if (picks.length > 0 && this.currentChannel) {
+        await this.currentChannel.send({
+          embeds: [buildDjAddedSongsEmbed(picks)],
         });
       }
     } catch (error) {

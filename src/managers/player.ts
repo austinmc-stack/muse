@@ -2,8 +2,6 @@ import {inject, injectable} from 'inversify';
 import {TYPES} from '../types.js';
 import Player from '../services/player.js';
 import FileCacheProvider from '../services/file-cache.js';
-import DjTts from '../services/dj-tts.js';
-import DjCommentary from '../services/dj-commentary.js';
 import DjRecommender from '../services/dj-recommender.js';
 import WrappedTracker from '../services/wrapped-tracker.js';
 import type YoutubeAPI from '../services/youtube-api.js';
@@ -17,8 +15,6 @@ export default class {
   constructor(
     @inject(TYPES.FileCache) fileCache: FileCacheProvider,
     @inject(TYPES.Services.YoutubeAPI) youtubeAPI: YoutubeAPI,
-    @inject(TYPES.Services.DjTts) private readonly djTts: DjTts,
-    @inject(TYPES.Services.DjCommentary) private readonly djCommentary: DjCommentary,
     @inject(TYPES.Services.DjRecommender) private readonly djRecommender: DjRecommender,
     @inject(TYPES.Services.WrappedTracker) private readonly wrappedTracker: WrappedTracker,
   ) {
@@ -35,8 +31,6 @@ export default class {
         this.fileCache,
         guildId,
         async song => this.youtubeAPI.findAudioFallback(song),
-        this.djTts,
-        this.djCommentary,
         this.djRecommender,
         this.wrappedTracker,
       );
