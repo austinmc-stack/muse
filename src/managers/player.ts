@@ -6,14 +6,17 @@ import DjTts from '../services/dj-tts.js';
 import DjCommentary from '../services/dj-commentary.js';
 import DjRecommender from '../services/dj-recommender.js';
 import WrappedTracker from '../services/wrapped-tracker.js';
- 
+import type YoutubeAPI from '../services/youtube-api.js';
+
 @injectable()
 export default class {
   private readonly guildPlayers: Map<string, Player>;
   private readonly fileCache: FileCacheProvider;
- 
+  private readonly youtubeAPI: YoutubeAPI;
+
   constructor(
     @inject(TYPES.FileCache) fileCache: FileCacheProvider,
+    @inject(TYPES.Services.YoutubeAPI) youtubeAPI: YoutubeAPI,
     @inject(TYPES.Services.DjTts) private readonly djTts: DjTts,
     @inject(TYPES.Services.DjCommentary) private readonly djCommentary: DjCommentary,
     @inject(TYPES.Services.DjRecommender) private readonly djRecommender: DjRecommender,
@@ -21,14 +24,23 @@ export default class {
   ) {
     this.guildPlayers = new Map();
     this.fileCache = fileCache;
+    this.youtubeAPI = youtubeAPI;
   }
- 
+
   get(guildId: string): Player {
     let player = this.guildPlayers.get(guildId);
- 
+
     if (!player) {
-      player = new Player(this.fileCache, guildId, this.djTts, this.djCommentary, this.djRecommender, this.wrappedTracker);
- 
+      player = new Player(
+        this.fileCache,
+        guildId,
+        async song => this.youtubeAPI.findAudioFallback(song),
+        this.djTts,
+        this.djCommentary,
+        this.djRecommender,
+        this.wrappedTracker,
+      );
+
       this.guildPlayers.set(guildId, player);
     }
  

@@ -19,6 +19,12 @@ const getSongTitle = ({title, url, offset, source}: QueuedSong, shouldTruncate =
   const cleanSongTitle = title.replace(/\[.*\]/, '').trim();
 
   const songTitle = shouldTruncate ? truncate(cleanSongTitle, getMaxSongTitleLength(cleanSongTitle)) : cleanSongTitle;
+  if (source === MediaSource.SoundCloud) {
+    const soundCloudTitle = truncate(songTitle, 256);
+    // Keep long share parameters in the playable URL without overflowing Discord embeds.
+    return url.length > 1024 ? soundCloudTitle : `[${soundCloudTitle}](${url})`;
+  }
+
   const youtubeId = url.length === 11 ? url : getYouTubeID(url) ?? '';
 
   return `[${songTitle}](https://www.youtube.com/watch?v=${youtubeId}${offset === 0 ? '' : '&t=' + String(offset)})`;
@@ -76,6 +82,10 @@ export const buildPlayingMessageEmbed = (player: Player): EmbedBuilder => {
 };
 
 export const buildQueueEmbed = (player: Player, page: number, pageSize: number): EmbedBuilder => {
+  if (page < 1) {
+    throw new Error('page must be at least 1');
+  }
+
   const currentlyPlaying = player.getCurrent();
 
   if (!currentlyPlaying) {
@@ -83,7 +93,7 @@ export const buildQueueEmbed = (player: Player, page: number, pageSize: number):
   }
 
   const queueSize = player.queueSize();
-  const maxQueuePage = Math.ceil((queueSize + 1) / pageSize);
+  const maxQueuePage = Math.max(1, Math.ceil(queueSize / pageSize));
 
   if (page > maxQueuePage) {
     throw new Error('the queue isn\'t that big');
@@ -99,8 +109,7 @@ export const buildQueueEmbed = (player: Player, page: number, pageSize: number):
       const duration = song.isLive ? 'live' : prettyTime(song.length);
 
       return `\`${songNumber}.\` ${getSongTitle(song, true)} \`[${duration}]\``;
-    })
-    .join('\n');
+    });
 
   const {artist, thumbnailUrl, playlist, requestedBy} = currentlyPlaying;
   const playlistTitle = playlist ? `(${playlist.title})` : '';
@@ -114,7 +123,16 @@ export const buildQueueEmbed = (player: Player, page: number, pageSize: number):
 
   if (player.getQueue().length > 0) {
     description += '**Up next:**\n';
-    description += queuedSongs;
+    for (const [index, song] of queuedSongs.entries()) {
+      // Leave room for a useful hint instead of rejecting the entire /queue response.
+      const overflowMessage = `… ${queuedSongs.length - index} more on this page; use a smaller page-size to view them.`;
+      if (description.length + song.length + 1 + overflowMessage.length > 4096) {
+        description += overflowMessage;
+        break;
+      }
+
+      description += `${song}\n`;
+    }
   }
 
   message
@@ -132,4 +150,3 @@ export const buildQueueEmbed = (player: Player, page: number, pageSize: number):
 
   return message;
 };
-
