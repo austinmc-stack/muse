@@ -57,6 +57,12 @@ export default class {
   private readonly shouldRegisterCommandsOnBot: boolean;
   private readonly commandsByName!: Collection<string, Command>;
   private readonly commandsByButtonId!: Collection<string, Command>;
+  // Discord's gateway can redeliver an interaction dispatch after a brief
+  // resume, which makes discord.js emit 'interactionCreate' twice for the
+  // same interaction -- the second handler then races the first's
+  // deferReply()/reply() and throws InteractionAlreadyReplied. Dedupe by id
+  // so a redelivered dispatch is dropped instead of re-running the command.
+  private readonly recentInteractionIds = new Set<string>();
 
   constructor(@inject(TYPES.Client) client: Client, @inject(TYPES.Config) config: Config) {
     this.client = client;
@@ -91,6 +97,11 @@ export default class {
     // Register event handlers
     // eslint-disable-next-line complexity
     this.client.on('interactionCreate', async interaction => {
+      if (this.isDuplicateInteraction(interaction.id)) {
+        debug(`Ignoring redelivered interaction: ${interaction.id}`);
+        return;
+      }
+
       try {
         if (interaction.isCommand()) {
           const command = this.commandsByName.get(interaction.commandName);
@@ -215,5 +226,18 @@ export default class {
     this.client.on('guildCreate', handleGuildCreate);
     this.client.on('voiceStateUpdate', handleVoiceStateUpdate);
     await this.client.login();
+  }
+
+  // Must be called synchronously (no await before it) so a back-to-back
+  // redelivery can't slip through while the first dispatch's handler is
+  // still on its first `await`.
+  private isDuplicateInteraction(id: string): boolean {
+    if (this.recentInteractionIds.has(id)) {
+      return true;
+    }
+
+    this.recentInteractionIds.add(id);
+    setTimeout(() => this.recentInteractionIds.delete(id), 5 * 60 * 1000).unref();
+    return false;
   }
 }

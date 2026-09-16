@@ -133,6 +133,7 @@ interface StructuralInteraction {
   editReply: ReturnType<typeof vi.fn>;
   guild: object | null;
   guildId: string | null;
+  id: string;
   isAutocomplete: () => boolean;
   isButton: () => boolean;
   isChatInputCommand: () => boolean;
@@ -190,6 +191,8 @@ const makeClient = (guildIds: string[] = []) => {
   return {client, handlers, setPresence};
 };
 
+let nextInteractionId = 0;
+
 const makeInteraction = (commandName: string, overrides: Partial<StructuralInteraction> = {}): StructuralInteraction => ({
   channelId: 'channel-id',
   commandName,
@@ -197,6 +200,7 @@ const makeInteraction = (commandName: string, overrides: Partial<StructuralInter
   editReply: vi.fn().mockResolvedValue(undefined),
   guild: {channels: {cache: new Collection()}},
   guildId: 'guild-id',
+  id: `interaction-${++nextInteractionId}`,
   isAutocomplete: () => false,
   isButton: () => false,
   isChatInputCommand: () => true,
