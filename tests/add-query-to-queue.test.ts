@@ -45,13 +45,26 @@ const makeQueuedSong = (title: string, overrides: Partial<SongMetadata> = {}): Q
   requestedBy: 'requester-id',
 });
 
-const makeInteraction = () => ({
-  guild: {id: GUILD_ID},
-  member: {user: {id: 'requester-id'}},
-  channel: {id: 'text-channel-id'},
-  deferReply: vi.fn().mockResolvedValue(undefined),
-  editReply: vi.fn().mockResolvedValue(undefined),
-});
+const makeInteraction = () => {
+  let deferred = false;
+
+  return {
+    guild: {id: GUILD_ID},
+    member: {user: {id: 'requester-id'}},
+    channel: {id: 'text-channel-id'},
+    // Mirrors discord.js: a second deferReply() on an already-deferred
+    // interaction throws InteractionAlreadyReplied, so a duplicate-defer
+    // bug in the code under test fails the test instead of passing silently.
+    deferReply: vi.fn().mockImplementation(async () => {
+      if (deferred) {
+        throw new Error('InteractionAlreadyReplied');
+      }
+
+      deferred = true;
+    }),
+    editReply: vi.fn().mockResolvedValue(undefined),
+  };
+};
 
 const makePausedPlayer = (...songs: QueuedSong[]) => {
   const player = new Player({} as never, GUILD_ID);

@@ -56,7 +56,6 @@ export default class AddQueryToQueue {
     skipCurrentTrack: boolean;
     interaction: ChatInputCommandInteraction;
   }): Promise<void> {
-    console.error(`[addToQueue] enter id=${interaction.id} replied=${String(interaction.replied)} deferred=${String(interaction.deferred)}`);
     const guildId = interaction.guild!.id;
     const player = this.playerManager.get(guildId);
     const currentQueueEntryId = player.getCurrentQueueEntryId();
@@ -180,8 +179,8 @@ export default class AddQueryToQueue {
       }
     }
 
-    // Normal path -- channel is not full or bot is already connected
-    await interaction.deferReply({ephemeral: queueAddResponseEphemeral});
+    // Normal path -- channel is not full or bot is already connected.
+    // continueAddToQueue() defers the reply itself (alreadyReplied: false).
     await this.continueAddToQueue({
       query,
       addToFrontOfQueue,
@@ -230,7 +229,6 @@ export default class AddQueryToQueue {
     queueAddResponseEphemeral: boolean;
     alreadyReplied: boolean;
   }): Promise<void> {
-    console.error(`[continueAddToQueue] enter id=${interaction.id} alreadyReplied=${String(alreadyReplied)} replied=${String(interaction.replied)} deferred=${String(interaction.deferred)}`);
     if (!alreadyReplied) {
       await interaction.deferReply({ephemeral: queueAddResponseEphemeral});
     }
