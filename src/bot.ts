@@ -73,6 +73,7 @@ export default class {
   }
 
   public async register(): Promise<void> {
+    console.error(`[Bot.register] called, client listener count for interactionCreate before attach: ${this.client.listenerCount('interactionCreate')}`);
     // Load in commands
     for (const command of container.getAll<Command>(TYPES.Command)) {
       // Make sure we can serialize to JSON without errors
@@ -98,7 +99,7 @@ export default class {
     // eslint-disable-next-line complexity
     this.client.on('interactionCreate', async interaction => {
       if (this.isDuplicateInteraction(interaction.id)) {
-        debug(`Ignoring redelivered interaction: ${interaction.id}`);
+        console.error(`Ignoring redelivered interaction: ${interaction.id}`);
         return;
       }
 

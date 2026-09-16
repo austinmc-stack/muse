@@ -182,6 +182,7 @@ const makeClient = (guildIds: string[] = []) => {
       handlers.set(event, handler);
       return client;
     }),
+    listenerCount: vi.fn((event: string) => (handlers.has(event) ? 1 : 0)),
     user: {
       id: 'application-id',
       setPresence,
