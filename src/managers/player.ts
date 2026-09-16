@@ -37,7 +37,7 @@ export default class {
 
       this.guildPlayers.set(guildId, player);
     }
- 
+
     return player;
   }
 }

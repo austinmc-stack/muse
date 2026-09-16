@@ -1,9 +1,9 @@
-import {ChatInputCommandInteraction, GuildMember, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, PermissionFlagsBits} from 'discord.js';
+import {ChatInputCommandInteraction, GuildMember, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, PermissionFlagsBits, VoiceChannel} from 'discord.js';
 import {inject, injectable} from 'inversify';
 import shuffle from 'array-shuffle';
 import {TYPES} from '../types.js';
 import GetSongs from '../services/get-songs.js';
-import {MediaSource, SongMetadata, STATUS} from './player.js';
+import Player, {MediaSource, SongMetadata, STATUS} from './player.js';
 import PlayerManager from '../managers/player.js';
 import {buildPlayingMessageEmbed} from '../utils/build-embed.js';
 import {getMemberVoiceChannel, getMostPopularVoiceChannel} from '../utils/channels.js';
@@ -73,7 +73,7 @@ export default class AddQueryToQueue {
       targetVoiceChannel
       && targetVoiceChannel.userLimit > 0
       && targetVoiceChannel.members.size >= targetVoiceChannel.userLimit
-      && player.voiceConnection === null // only matters if we need to JOIN
+      && player.voiceConnection === null // Only matters if we need to JOIN
     ) {
       const botMember = interaction.guild!.members.me;
       const canManage = botMember?.permissionsIn(targetVoiceChannel).has(PermissionFlagsBits.ManageChannels) ?? false;
@@ -103,7 +103,7 @@ export default class AddQueryToQueue {
 
       const confirmMsg = await interaction.reply({
         content: `the voice channel is full (${targetVoiceChannel.members.size}/${originalLimit}). should i temporarily expand it to join? i'll restore the limit once i'm in.`,
-        // discord.js@14.11's InteractionReplyOptions['components'] typing can't
+        // Discord.js@14.11's InteractionReplyOptions['components'] typing can't
         // structurally unify ActionRowBuilder instances; safe at runtime.
         components: [confirmRow as any],
         fetchReply: true,
@@ -138,7 +138,9 @@ export default class AddQueryToQueue {
           // Small delay to let Discord propagate the channel update before
           // the voice state join is attempted -- without this, Discord
           // sometimes still rejects the join against the old cached limit.
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => {
+            setTimeout(resolve, 500);
+          });
 
           // Proceed with the normal flow below -- the channel is no longer full.
           // Restore original limit after joining (in a finally block so it
@@ -164,7 +166,9 @@ export default class AddQueryToQueue {
             // Small delay to let the bot actually finish joining before
             // the limit goes back -- otherwise it hits the same full-channel
             // wall immediately after restoring.
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => {
+              setTimeout(resolve, 1000);
+            });
             await targetVoiceChannel.edit({userLimit: originalLimit});
           }
         } catch (error) {
@@ -217,10 +221,10 @@ export default class AddQueryToQueue {
     shouldSplitChapters: boolean;
     skipCurrentTrack: boolean;
     interaction: ChatInputCommandInteraction;
-    player: any;
+    player: Player;
     wasPlayingSong: boolean;
     currentQueueEntryId: number | null;
-    targetVoiceChannel: any;
+    targetVoiceChannel: VoiceChannel;
     playlistLimit: number;
     queueAddResponseEphemeral: boolean;
     alreadyReplied: boolean;

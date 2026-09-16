@@ -93,6 +93,7 @@
     "@discordjs/voice": "0.19.2",
     "@distube/ytdl-core": "^4.16.12",
     "@distube/ytsr": "^2.0.4",
+    "@napi-rs/canvas": "1.0.9",
     "@prisma/client": "4.16.0",
     "@types/libsodium-wrappers": "^0.7.9",
     "array-shuffle": "^3.0.0",

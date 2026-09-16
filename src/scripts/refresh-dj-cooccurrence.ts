@@ -17,7 +17,7 @@ async function refresh(): Promise<void> {
   const recent = await prisma.playHistory.findMany({
     where: {skipped: false},
     orderBy: {playedAt: 'desc'},
-    take: 5000, // cap for memory; tune as your history grows
+    take: 5000, // Cap for memory; tune as your history grows
   });
 
   // Group by guild, then by hour-bucket, to find tracks played "together."
@@ -37,7 +37,7 @@ async function refresh(): Promise<void> {
       for (let j = i + 1; j < sorted.length; j++) {
         const deltaMs = sorted[j].playedAt.getTime() - sorted[i].playedAt.getTime();
         if (deltaMs > ONE_HOUR_MS) {
-          break; // sorted ascending, so nothing further in this guild is within range either
+          break; // Sorted ascending, so nothing further in this guild is within range either
         }
 
         if (sorted[i].youtubeId === sorted[j].youtubeId) {
@@ -57,13 +57,13 @@ async function refresh(): Promise<void> {
     }
   }
 
-  for (const {a, b, count} of pairScores.values()) {
+  await Promise.all([...pairScores.values()].map(async ({a, b, count}) => {
     await prisma.trackCooccurrence.upsert({
       where: {youtubeIdA_youtubeIdB: {youtubeIdA: a, youtubeIdB: b}},
       create: {youtubeIdA: a, youtubeIdB: b, score: count, sampleSize: count},
       update: {score: count, sampleSize: count},
     });
-  }
+  }));
 
   console.log(`[DJ] cooccurrence refreshed: ${pairScores.size} pairs across ${byGuild.size} guild(s)`);
 }

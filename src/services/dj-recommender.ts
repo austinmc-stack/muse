@@ -50,7 +50,9 @@ export default class DjRecommender {
 
     const candidates = new Map<string, {track: RecommendedTrack; score: number}>();
 
-    for (const [i, seed] of seeds.entries()) {
+    // Each seed's queries are independent of the others, so they run in
+    // parallel rather than sequentially awaiting one seed at a time.
+    await Promise.all(seeds.map(async (seed, i) => {
       const recencyWeight = 1 - (i * 0.25);
 
       // Collaborative signal: precomputed co-occurrence table.
@@ -63,7 +65,7 @@ export default class DjRecommender {
         take: 20,
       });
 
-      for (const row of coocc) {
+      await Promise.all(coocc.map(async row => {
         // We need title/artist for the candidate — pull from the most
         // recent play_history row that references this youtubeId.
         const meta = await prisma.playHistory.findFirst({
@@ -71,11 +73,11 @@ export default class DjRecommender {
           orderBy: {playedAt: 'desc'},
         });
         if (!meta) {
-          continue;
+          return;
         }
 
         addOrBoost(candidates, meta, row.score * WEIGHTS.cooccurrence * recencyWeight);
-      }
+      }));
 
       // Metadata signal: same artist played before, excluding already-played.
       const sameArtist = await prisma.playHistory.findMany({
@@ -90,7 +92,7 @@ export default class DjRecommender {
       for (const meta of sameArtist) {
         addOrBoost(candidates, meta, WEIGHTS.sameArtist * recencyWeight);
       }
-    }
+    }));
 
     // Penalize artists that already appeared in the last 5 plays so the
     // DJ doesn't loop one artist forever.

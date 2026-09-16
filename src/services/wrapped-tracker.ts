@@ -12,12 +12,12 @@
 // you're left with one row with msPlayed=null rather than missing or
 // duplicate data — acceptable for stats purposes, and easy to filter
 // out in WrappedService queries (WHERE msPlayed IS NOT NULL).
- 
+
 import {injectable} from 'inversify';
 import {PrismaClient} from '@prisma/client';
- 
+
 const prisma = new PrismaClient();
- 
+
 @injectable()
 export default class WrappedTracker {
   /**
@@ -33,19 +33,19 @@ export default class WrappedTracker {
       where: {guildId, youtubeId},
       orderBy: {playedAt: 'desc'},
     });
- 
+
     if (!row) {
       return null;
     }
- 
+
     await prisma.playHistory.update({
       where: {id: row.id},
       data: {durationMs},
     });
- 
+
     return row.id;
   }
- 
+
   /**
    * Call this when a track stops playing, however it stops (natural
    * end, skip, disconnect) — records actual listened time.

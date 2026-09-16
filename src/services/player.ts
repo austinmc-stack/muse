@@ -32,13 +32,12 @@ import {
 import {destroyVoiceConnection, recoverVoiceConnection} from './voice-connection-recovery.js';
 import debug from '../utils/debug.js';
 import {getGuildSettings} from '../utils/get-guild-settings.js';
-import {buildPlayingMessageEmbed} from '../utils/build-embed.js';
+import {buildPlayingMessageEmbed, buildDjAddedSongsEmbed} from '../utils/build-embed.js';
 import {getSoundCloudMediaSource, getYouTubeMediaSource, YtDlpMediaUnavailableError} from '../utils/yt-dlp.js';
 import {Setting} from '@prisma/client';
 import DjRecommender from './dj-recommender.js';
 import {getDjSettings} from '../utils/get-dj-settings.js';
 import WrappedTracker from './wrapped-tracker.js';
-import {buildDjAddedSongsEmbed} from '../utils/build-embed.js';
 
 export {DEFAULT_VOLUME, MediaSource, STATUS};
 export type {AgeRestrictedFallbackResolver, PlayerEvents, QueuedPlaylist, QueuedSong, SongMetadata};
@@ -125,6 +124,8 @@ export default class {
   private voiceActivityVolumeTarget?: number;
   private voiceActivitySessionGeneration = 0;
   private hasRegisteredVoiceActivityListener = false;
+  private currentPlayHistoryId: number | null = null;
+  private currentTrackStartedAt: number | null = null;
 
   constructor(
     fileCache: FileCacheProvider,
@@ -706,7 +707,9 @@ export default class {
           artist: currentSong.artist,
           requestedBy: currentSong.requestedBy === 'dj' ? null : currentSong.requestedBy,
           wasDjPick: currentSong.requestedBy === 'dj',
-        }).catch(error => debug('Failed to record DJ play history:', error));
+        }).catch(error => {
+          debug('Failed to record DJ play history:', error);
+        });
       }
 
       if (this.wrappedTracker) {
@@ -728,7 +731,9 @@ export default class {
           currentSong.length * 1000, // QueuedSong.length is in SECONDS
         ).then(id => {
           this.currentPlayHistoryId = id;
-        }).catch(error => debug('Failed to set track duration for Wrapped:', error));
+        }).catch(error => {
+          debug('Failed to set track duration for Wrapped:', error);
+        });
       }
 
       this.startTrackingPosition(0);
@@ -1040,7 +1045,7 @@ export default class {
       if (!currentSong) {
         return;
       }
-    
+
       // Auto announce the next song if configured to
       const settings = await getGuildSettings(this.guildId);
       const {autoAnnounceNextSong} = settings;
@@ -1283,35 +1288,32 @@ export default class {
     this.audioResource?.volume?.setVolume((level ?? this.getVolume()) / 100);
   }
 
-  private currentPlayHistoryId: number | null = null;
-  private currentTrackStartedAt: number | null = null;
-
   private recordListenedDurationIfTracking(): void {
     if (!this.wrappedTracker || this.currentPlayHistoryId === null || this.currentTrackStartedAt === null) {
       return;
     }
- 
+
     const msPlayed = Date.now() - this.currentTrackStartedAt;
     void this.wrappedTracker.recordListenedDuration(this.currentPlayHistoryId, msPlayed);
- 
+
     this.currentPlayHistoryId = null;
     this.currentTrackStartedAt = null;
   }
-  
+
   private async maybeAutoQueue(): Promise<void> {
     if (!this.djRecommender) {
       return;
     }
-  
+
     const settings = await getDjSettings(this.guildId);
     if (!settings.enabled) {
       return;
     }
-  
+
     if (this.queueSize() >= settings.minQueueSize) {
       return;
     }
-  
+
     try {
       const picks = await this.djRecommender.recommendNext(this.guildId, settings.minQueueSize);
 
@@ -1320,13 +1322,13 @@ export default class {
           title: pick.title,
           artist: pick.artist,
           url: pick.youtubeId,
-          length: 0, // unknown until resolved; see note below
+          length: 0, // Unknown until resolved; see note below
           offset: 0,
           playlist: null,
           isLive: false,
           thumbnailUrl: null,
           source: MediaSource.Youtube,
-          addedInChannelId: '', // no channel context for DJ auto-picks
+          addedInChannelId: '', // No channel context for DJ auto-picks
           requestedBy: 'dj',
         });
       }

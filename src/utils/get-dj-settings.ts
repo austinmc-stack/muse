@@ -4,10 +4,11 @@
 // feature stays cleanly removable.
 
 import {PrismaClient, DjSetting} from '@prisma/client';
+import {Except} from 'type-fest';
 
 const prisma = new PrismaClient();
 
-const DEFAULTS: Omit<DjSetting, 'guildId' | 'createdAt' | 'updatedAt'> = {
+const DEFAULTS: Except<DjSetting, 'guildId' | 'createdAt' | 'updatedAt'> = {
   enabled: false,
   minQueueSize: 2,
 };
@@ -29,7 +30,7 @@ export async function getDjSettings(guildId: string): Promise<DjSetting> {
 
 export async function updateDjSettings(
   guildId: string,
-  data: Partial<Omit<DjSetting, 'guildId' | 'createdAt' | 'updatedAt'>>,
+  data: Partial<Except<DjSetting, 'guildId' | 'createdAt' | 'updatedAt'>>,
 ): Promise<DjSetting> {
   return prisma.djSetting.upsert({
     where: {guildId},
