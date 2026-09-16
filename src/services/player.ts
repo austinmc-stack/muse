@@ -1049,7 +1049,8 @@ export default class {
           embeds: [buildPlayingMessageEmbed(this)],
         });
       }
-        }
+    }
+  }
 
   private async finishQueue(): Promise<void> {
     this.playbackAttempts.invalidate();

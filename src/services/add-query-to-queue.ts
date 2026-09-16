@@ -103,7 +103,9 @@ export default class AddQueryToQueue {
 
       const confirmMsg = await interaction.reply({
         content: `the voice channel is full (${targetVoiceChannel.members.size}/${originalLimit}). should i temporarily expand it to join? i'll restore the limit once i'm in.`,
-        components: [confirmRow],
+        // discord.js@14.11's InteractionReplyOptions['components'] typing can't
+        // structurally unify ActionRowBuilder instances; safe at runtime.
+        components: [confirmRow as any],
         fetchReply: true,
       });
 
@@ -151,6 +153,7 @@ export default class AddQueryToQueue {
               interaction,
               player,
               wasPlayingSong,
+              currentQueueEntryId,
               targetVoiceChannel,
               playlistLimit,
               queueAddResponseEphemeral,
@@ -183,6 +186,7 @@ export default class AddQueryToQueue {
       interaction,
       player,
       wasPlayingSong,
+      currentQueueEntryId,
       targetVoiceChannel,
       playlistLimit,
       queueAddResponseEphemeral,
@@ -201,6 +205,7 @@ export default class AddQueryToQueue {
     interaction,
     player,
     wasPlayingSong,
+    currentQueueEntryId,
     targetVoiceChannel,
     playlistLimit,
     queueAddResponseEphemeral,
@@ -214,6 +219,7 @@ export default class AddQueryToQueue {
     interaction: ChatInputCommandInteraction;
     player: any;
     wasPlayingSong: boolean;
+    currentQueueEntryId: number | null;
     targetVoiceChannel: any;
     playlistLimit: number;
     queueAddResponseEphemeral: boolean;
