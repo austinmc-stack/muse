@@ -436,7 +436,9 @@ describe('interaction boundaries', () => {
     await invoke(handlers, 'interactionCreate', interaction);
 
     expect(mocks.debug).toHaveBeenCalledWith('Error: command failure');
-    expect(errorLog).toHaveBeenCalledWith('Discord interaction failed (/play, guild=guild-id, channel=channel-id, user=member-id): Error: command failure');
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('Discord interaction failed (/play, id='));
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('replied=false deferred=false'));
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('Error: command failure'));
     expect(interaction.reply).toHaveBeenCalledWith({content: '🚫 ope: command failure', ephemeral: true});
     expect(interaction.editReply).not.toHaveBeenCalled();
   });

@@ -33,6 +33,23 @@ const sanitizeErrorForLog = (error: unknown) => {
   return `${name}: ${detail || 'unknown error'}`;
 };
 
+// Only the "at ..." frames -- never the error's own message line, which can
+// carry the same unredacted secrets sanitizeErrorDetail exists to strip.
+// This is what pinpoints which reply()/deferReply() call actually threw,
+// since the top-level error name/message alone doesn't say that.
+const sanitizeStackForLog = (error: unknown) => {
+  if (!(error instanceof Error) || !error.stack) {
+    return null;
+  }
+
+  const frames = error.stack
+    .split('\n')
+    .filter(line => /^\s+at /.test(line))
+    .slice(0, 5);
+
+  return frames.length > 0 ? frames.join('\n') : null;
+};
+
 @injectable()
 export default class {
   private readonly client: Client;
@@ -125,7 +142,15 @@ export default class {
           : interaction.isButton()
             ? `button:${interaction.customId}`
             : interaction.type.toString();
-        console.error(`Discord interaction failed (${interactionName}, guild=${interaction.guildId ?? 'dm'}, channel=${interaction.channelId ?? 'unknown'}, user=${interaction.user.id}): ${sanitizedError}`);
+        const replyState = (interaction.isCommand() || interaction.isButton())
+          ? `replied=${String(interaction.replied)} deferred=${String(interaction.deferred)}`
+          : 'n/a';
+        console.error(`Discord interaction failed (${interactionName}, id=${interaction.id}, ${replyState}, guild=${interaction.guildId ?? 'dm'}, channel=${interaction.channelId ?? 'unknown'}, user=${interaction.user.id}): ${sanitizedError}`);
+        const stack = sanitizeStackForLog(error);
+        if (stack) {
+          console.error(stack);
+        }
+
         const userSafeError = new Error(sanitizeErrorDetail(error));
 
         // This can fail if the message was deleted, and we don't want to crash the whole bot
