@@ -55,9 +55,11 @@ export default class DjRecommender {
     await Promise.all(seeds.map(async (seed, i) => {
       const recencyWeight = 1 - (i * 0.25);
 
-      // Collaborative signal: precomputed co-occurrence table.
+      // Collaborative signal: precomputed co-occurrence table, scoped to
+      // this guild so other guilds' listening habits never leak in.
       const coocc = await prisma.trackCooccurrence.findMany({
         where: {
+          guildId,
           youtubeIdA: seed.youtubeId,
           youtubeIdB: {notIn: [...alreadyPlayed]},
         },
@@ -67,9 +69,10 @@ export default class DjRecommender {
 
       await Promise.all(coocc.map(async row => {
         // We need title/artist for the candidate — pull from the most
-        // recent play_history row that references this youtubeId.
+        // recent play_history row that references this youtubeId, scoped
+        // to this guild (same reason as the cooccurrence query above).
         const meta = await prisma.playHistory.findFirst({
-          where: {youtubeId: row.youtubeIdB},
+          where: {guildId, youtubeId: row.youtubeIdB},
           orderBy: {playedAt: 'desc'},
         });
         if (!meta) {
@@ -79,9 +82,10 @@ export default class DjRecommender {
         addOrBoost(candidates, meta, row.score * WEIGHTS.cooccurrence * recencyWeight);
       }));
 
-      // Metadata signal: same artist played before, excluding already-played.
+      // Metadata signal: same artist played before in this guild, excluding already-played.
       const sameArtist = await prisma.playHistory.findMany({
         where: {
+          guildId,
           artist: seed.artist,
           youtubeId: {notIn: [...alreadyPlayed]},
         },

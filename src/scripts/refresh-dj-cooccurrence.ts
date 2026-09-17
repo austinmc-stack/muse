@@ -28,10 +28,14 @@ async function refresh(): Promise<void> {
     byGuild.set(row.guildId, list);
   }
 
-  const pairScores = new Map<string, {a: string; b: string; count: number}>();
+  // Pair counts must stay scoped per guild -- one guild's listening habits
+  // must never bleed into another guild's DJ recommendations, so this map
+  // is rebuilt fresh inside the per-guild loop rather than shared across it.
+  let totalPairs = 0;
 
-  for (const rows of byGuild.values()) {
+  for (const [guildId, rows] of byGuild.entries()) {
     const sorted = [...rows].sort((a, b) => a.playedAt.getTime() - b.playedAt.getTime());
+    const pairScores = new Map<string, {a: string; b: string; count: number}>();
 
     for (let i = 0; i < sorted.length; i++) {
       for (let j = i + 1; j < sorted.length; j++) {
@@ -55,17 +59,19 @@ async function refresh(): Promise<void> {
         }
       }
     }
+
+    await Promise.all([...pairScores.values()].map(async ({a, b, count}) => {
+      await prisma.trackCooccurrence.upsert({
+        where: {guildId_youtubeIdA_youtubeIdB: {guildId, youtubeIdA: a, youtubeIdB: b}},
+        create: {guildId, youtubeIdA: a, youtubeIdB: b, score: count, sampleSize: count},
+        update: {score: count, sampleSize: count},
+      });
+    }));
+
+    totalPairs += pairScores.size;
   }
 
-  await Promise.all([...pairScores.values()].map(async ({a, b, count}) => {
-    await prisma.trackCooccurrence.upsert({
-      where: {youtubeIdA_youtubeIdB: {youtubeIdA: a, youtubeIdB: b}},
-      create: {youtubeIdA: a, youtubeIdB: b, score: count, sampleSize: count},
-      update: {score: count, sampleSize: count},
-    });
-  }));
-
-  console.log(`[DJ] cooccurrence refreshed: ${pairScores.size} pairs across ${byGuild.size} guild(s)`);
+  console.log(`[DJ] cooccurrence refreshed: ${totalPairs} pairs across ${byGuild.size} guild(s)`);
 }
 
 refresh()

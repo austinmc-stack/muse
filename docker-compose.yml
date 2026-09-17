@@ -13,6 +13,7 @@ services:
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
       - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-muse}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-muse}
+      - DEBUG=${DEBUG:-}
     depends_on:
       db:
         condition: service_healthy
@@ -35,6 +36,7 @@ services:
     # inside it. Refresh runs every 15 minutes (900s) after that.
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-muse}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-muse}
+      - DEBUG=${DEBUG:-}
     depends_on:
       muse:
         condition: service_started

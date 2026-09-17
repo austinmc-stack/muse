@@ -82,15 +82,18 @@ model PlayHistory {
 
 // Precomputed co-occurrence, refreshed periodically rather than
 // computed live on every recommendation (see scripts/refresh-dj-cooccurrence.ts).
+// Scoped per-guild -- co-occurrence pairs from one guild's listening
+// history must never leak into another guild's recommendations.
 model TrackCooccurrence {
+  guildId     String
   youtubeIdA  String
   youtubeIdB  String
   score       Float    @default(0)
   sampleSize  Int      @default(0)
   updatedAt   DateTime @updatedAt
 
-  @@id([youtubeIdA, youtubeIdB])
-  @@index([youtubeIdA, score])
+  @@id([guildId, youtubeIdA, youtubeIdB])
+  @@index([guildId, youtubeIdA, score])
 }
 
 // Caches Spotify genre lookups by artist name, since YouTube gives
