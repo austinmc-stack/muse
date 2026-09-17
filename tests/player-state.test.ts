@@ -5,6 +5,7 @@ const dependencyMocks = vi.hoisted(() => ({
   createAudioPlayer: vi.fn(),
   createAudioResource: vi.fn(),
   entersState: vi.fn(),
+  getDjSettings: vi.fn(),
   getGuildSettings: vi.fn(),
   joinVoiceChannel: vi.fn(),
 }));
@@ -33,7 +34,13 @@ vi.mock('../src/utils/get-guild-settings.js', () => ({
   getGuildSettings: dependencyMocks.getGuildSettings,
 }));
 
+vi.mock('../src/utils/get-dj-settings.js', () => ({
+  getDjSettings: dependencyMocks.getDjSettings,
+}));
+
 vi.mock('../src/utils/build-embed.js', () => ({
+  buildDjAddedSongsEmbed: vi.fn(() => ({title: 'dj-added'})),
+  buildDjOutOfRecommendationsEmbed: vi.fn(() => ({title: 'dj-out-of-recs'})),
   buildPlayingMessageEmbed: vi.fn(() => ({title: 'playing'})),
 }));
 
@@ -113,6 +120,7 @@ const getPrivateState = (player: Player) => player as unknown as {
   currentChannel: object | undefined;
   currentQueueEntryVersion: number;
   finishQueue(): Promise<void>;
+  maybeAutoQueue(): Promise<void>;
   nowPlaying: QueuedSong | null;
   nowPlayingQueueEntryVersion: number | null;
   playAudioPlayerResource(resource: object): void;
@@ -157,6 +165,10 @@ beforeEach(() => {
   dependencyMocks.getGuildSettings.mockResolvedValue({
     autoAnnounceNextSong: false,
     secondsToWaitAfterQueueEmpties: 0,
+  });
+  dependencyMocks.getDjSettings.mockResolvedValue({
+    enabled: true,
+    minQueueSize: 2,
   });
 });
 
@@ -533,6 +545,38 @@ describe('Player same-URL entry identity', () => {
     expect(firstAudioPlayer.unpause).not.toHaveBeenCalled();
     expect(dependencyMocks.createAudioPlayer).toHaveBeenCalledTimes(2);
     expect(getStream).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('Player DJ auto-queue exhaustion notice', () => {
+  it('tells the channel when the DJ has no fresh recommendations left', async () => {
+    const djRecommender = {
+      recommendNext: vi.fn().mockRejectedValue(new Error('no candidates found and fallback pool is empty')),
+    };
+    const player = new Player({} as never, GUILD_ID, undefined, djRecommender as never);
+    const send = vi.fn().mockResolvedValue(undefined);
+    Object.assign(player, {currentChannel: {send}});
+
+    await getPrivateState(player).maybeAutoQueue();
+
+    expect(djRecommender.recommendNext).toHaveBeenCalledWith(GUILD_ID, 2);
+    expect(send).toHaveBeenCalledWith({embeds: [{title: 'dj-out-of-recs'}]});
+  });
+
+  it('stays silent when the DJ successfully adds songs', async () => {
+    const djRecommender = {
+      recommendNext: vi.fn().mockResolvedValue([
+        {artist: 'Artist A', title: 'Track A', youtubeId: 'track-a'},
+      ]),
+    };
+    const player = new Player({} as never, GUILD_ID, undefined, djRecommender as never);
+    const send = vi.fn().mockResolvedValue(undefined);
+    Object.assign(player, {currentChannel: {send}});
+
+    await getPrivateState(player).maybeAutoQueue();
+
+    expect(send).toHaveBeenCalledWith({embeds: [{title: 'dj-added'}]});
+    expect(player.getCurrent()?.title).toBe('Track A');
   });
 });
 

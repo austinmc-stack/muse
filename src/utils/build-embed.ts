@@ -92,6 +92,10 @@ export const buildDjAddedSongsEmbed = (picks: RecommendedTrack[]): EmbedBuilder 
     .setDescription(`🎧 **DJ added to the queue**\n${description}`);
 };
 
+export const buildDjOutOfRecommendationsEmbed = (): EmbedBuilder => new EmbedBuilder()
+  .setColor('DarkPurple')
+  .setDescription('🎧 **DJ ran out of fresh recommendations for this server.**\nPlay something with `/play` to keep the music going!');
+
 export const buildQueueEmbed = (player: Player, page: number, pageSize: number): EmbedBuilder => {
   if (page < 1) {
     throw new Error('page must be at least 1');

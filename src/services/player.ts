@@ -32,7 +32,7 @@ import {
 import {destroyVoiceConnection, recoverVoiceConnection} from './voice-connection-recovery.js';
 import debug from '../utils/debug.js';
 import {getGuildSettings} from '../utils/get-guild-settings.js';
-import {buildPlayingMessageEmbed, buildDjAddedSongsEmbed} from '../utils/build-embed.js';
+import {buildPlayingMessageEmbed, buildDjAddedSongsEmbed, buildDjOutOfRecommendationsEmbed} from '../utils/build-embed.js';
 import {getSoundCloudMediaSource, getYouTubeMediaSource, YtDlpMediaUnavailableError} from '../utils/yt-dlp.js';
 import {Setting} from '@prisma/client';
 import DjRecommender from './dj-recommender.js';
@@ -1340,6 +1340,12 @@ export default class {
       }
     } catch (error) {
       debug(`DJ auto-queue skipped for guild ${this.guildId}:`, error);
+
+      if (this.currentChannel) {
+        await this.currentChannel.send({
+          embeds: [buildDjOutOfRecommendationsEmbed()],
+        });
+      }
     }
   }
 
