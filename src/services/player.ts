@@ -128,6 +128,14 @@ export default class {
   private currentPlayHistoryId: number | null = null;
   private currentTrackStartedAt: number | null = null;
 
+  // Guards maybeAutoQueue(): it's now called both from the on-skip path
+  // (forward()) and the natural end-of-track path (onAudioPlayerIdle), so
+  // an in-flight run must block a second overlapping one for this guild
+  // from also queueing tracks. One Player instance per guild (see
+  // PlayerManager), so an instance field is already guild-scoped -- no
+  // cross-process lock needed on this single-host deployment.
+  private autoQueueInFlight = false;
+
   constructor(
     fileCache: FileCacheProvider,
     guildId: string,
@@ -270,6 +278,15 @@ export default class {
     const originalQueuePosition = this.queuePosition;
     const originalQueueEntryVersion = this.currentQueueEntryVersion;
     this.manualForward(skip);
+
+    if (!this.getCurrent()) {
+      // Skipped past the end of the queue -- give DJ auto-queue a chance to
+      // top it up right now (same shared maybeAutoQueue() that
+      // onAudioPlayerIdle calls on natural end-of-track), instead of only
+      // relying on the idle path or letting finishQueue()'s leave timer fire.
+      await this.maybeAutoQueue();
+    }
+
     const destinationSong = this.getCurrent();
     const destinationQueueEntryVersion = this.currentQueueEntryVersion;
     let destinationPlayback: PlayerPlaybackAttemptContext | null = null;
@@ -1320,10 +1337,25 @@ export default class {
   }
 
   private async maybeAutoQueue(): Promise<void> {
-    if (!this.djRecommender) {
+    const {djRecommender} = this;
+    if (!djRecommender) {
       return;
     }
 
+    if (this.autoQueueInFlight) {
+      debug(`DJ auto-queue already running for guild ${this.guildId}, skipping overlapping trigger`);
+      return;
+    }
+
+    this.autoQueueInFlight = true;
+    try {
+      await this.runAutoQueue(djRecommender);
+    } finally {
+      this.autoQueueInFlight = false;
+    }
+  }
+
+  private async runAutoQueue(djRecommender: DjRecommender): Promise<void> {
     const settings = await getDjSettings(this.guildId);
     if (!settings.enabled) {
       return;
@@ -1346,7 +1378,7 @@ export default class {
       const djPerfStart = Date.now();
       let picks: RecommendedTrack[];
       try {
-        picks = await this.djRecommender.recommendNext(this.guildId, settings.minQueueSize, avoidYoutubeIds);
+        picks = await djRecommender.recommendNext(this.guildId, settings.minQueueSize, avoidYoutubeIds);
       } finally {
         console.log(`[perf] dj-candidate-selection: ${Date.now() - djPerfStart}ms`);
       }

@@ -633,6 +633,80 @@ describe('Player DJ channel resolution (djChannelId)', () => {
   });
 });
 
+describe('Player on-skip DJ auto-queue', () => {
+  it('tops up immediately when a skip empties the queue, so playback continues instead of finishing the queue', async () => {
+    const djRecommender = {
+      recommendNext: vi.fn().mockResolvedValue([
+        {artist: 'Artist B', title: 'Track B', youtubeId: 'track-b'},
+      ]),
+      recordPlay: vi.fn().mockResolvedValue(undefined),
+    };
+    const player = new Player({} as never, GUILD_ID, undefined, djRecommender as never);
+    const voiceConnection = makeVoiceConnection();
+    const getStream = vi.fn().mockResolvedValue(Readable.from([]));
+    player.voiceConnection = voiceConnection as never;
+    Object.assign(player, {getStream});
+    const song = makeSong('Only entry');
+    player.add(song);
+    await player.play();
+
+    await player.forward(1);
+
+    expect(djRecommender.recommendNext).toHaveBeenCalledWith(GUILD_ID, 2, []);
+    expect(player.getCurrent()?.title).toBe('Track B');
+    expect(player.status).toBe(STATUS.PLAYING);
+    expect(getStream).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves the queue empty (and finishes it) when DJ is off or has nothing to add', async () => {
+    const djRecommender = {
+      recommendNext: vi.fn().mockRejectedValue(new Error('no candidates found and fallback pool is empty')),
+      recordPlay: vi.fn().mockResolvedValue(undefined),
+    };
+    const player = new Player({} as never, GUILD_ID, undefined, djRecommender as never);
+    const voiceConnection = makeVoiceConnection();
+    const getStream = vi.fn().mockResolvedValue(Readable.from([]));
+    player.voiceConnection = voiceConnection as never;
+    Object.assign(player, {getStream});
+    player.add(makeSong('Only entry'));
+    await player.play();
+
+    await player.forward(1);
+
+    expect(player.getCurrent()).toBeNull();
+    expect(player.status).toBe(STATUS.IDLE);
+  });
+
+  it('does not run two overlapping auto-queue passes for the same guild (race guard)', async () => {
+    const recommendDeferred = makeDeferred<Array<{artist: string; title: string; youtubeId: string}>>();
+    const djRecommender = {
+      recommendNext: vi.fn().mockReturnValue(recommendDeferred.promise),
+      recordPlay: vi.fn().mockResolvedValue(undefined),
+    };
+    const player = new Player({} as never, GUILD_ID, undefined, djRecommender as never);
+    const voiceConnection = makeVoiceConnection();
+    const getStream = vi.fn().mockResolvedValue(Readable.from([]));
+    player.voiceConnection = voiceConnection as never;
+    Object.assign(player, {getStream});
+    player.add(makeSong('Only entry'));
+    await player.play();
+
+    // Simulates the on-skip trigger (forward()) and the natural idle trigger
+    // (onAudioPlayerIdle) both reaching maybeAutoQueue() for the same guild
+    // while the first DB call is still in flight.
+    const firstForward = player.forward(1);
+    await getPrivateState(player).maybeAutoQueue();
+
+    expect(djRecommender.recommendNext).toHaveBeenCalledTimes(1);
+
+    recommendDeferred.resolve([{artist: 'Artist B', title: 'Track B', youtubeId: 'track-b'}]);
+    await firstForward;
+
+    expect(djRecommender.recommendNext).toHaveBeenCalledTimes(1);
+    expect(player.getCurrent()?.title).toBe('Track B');
+  });
+});
+
 describe('Player Wrapped listener tracking', () => {
   it('records everyone present as a listener, tagging the requester and excluding bots', async () => {
     const voiceConnection = makeVoiceConnection();
