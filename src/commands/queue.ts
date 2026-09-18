@@ -24,6 +24,10 @@ export default class implements Command {
       .setMaxValue(30)
       .setRequired(false));
 
+  public get isPlayerCommand() {
+    return true;
+  }
+
   private readonly playerManager: PlayerManager;
 
   constructor(@inject(TYPES.Managers.Player) playerManager: PlayerManager) {

@@ -12,6 +12,10 @@ export default class implements Command {
     .setName('now-playing')
     .setDescription('shows the currently played song');
 
+  public get isPlayerCommand() {
+    return true;
+  }
+
   private readonly playerManager: PlayerManager;
 
   constructor(@inject(TYPES.Managers.Player) playerManager: PlayerManager) {

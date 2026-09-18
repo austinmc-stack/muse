@@ -22,20 +22,28 @@ services:
 
   dj-worker:
     # Reuses the exact same image as `muse` -- no separate Dockerfile
-    # needed, since refresh-dj-cooccurrence.js only needs @prisma/client
-    # and DATABASE_URL, both already baked into / passed to this image.
+    # needed, since refresh-dj-cooccurrence.js and send-stats-digest.js only
+    # need @prisma/client + DATABASE_URL (and DISCORD_TOKEN, only for
+    # send-stats-digest.js's owner-DM delivery -- no gateway/Client login,
+    # just plain REST calls), all already baked into / passed to this image.
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["sh", "-c", "sleep 60 && while true; do node dist/scripts/refresh-dj-cooccurrence.js; sleep 900; done"]
+    # Two independent background loops in one container rather than a
+    # second service: cooccurrence refresh every 15min (900s), stats digest
+    # check once a day (86400s -- the digest script itself decides per-guild
+    # whether that guild's own cadence is actually due). `wait` keeps the
+    # container alive as long as either loop is running.
+    command: ["sh", "-c", "sleep 60 && (while true; do node dist/scripts/refresh-dj-cooccurrence.js; sleep 900; done) & (while true; do node dist/scripts/send-stats-digest.js; sleep 86400; done) & wait"]
     # The initial `sleep 60` gives `muse` a head start to run its `db push`
     # and create the DJ tables before this service's first query -- belt
     # and suspenders alongside depends_on below, since service_started
     # only means the muse CONTAINER started, not that db push finished
-    # inside it. Refresh runs every 15 minutes (900s) after that.
+    # inside it.
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-muse}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-muse}
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
       - DEBUG=${DEBUG:-}
     depends_on:
       muse:

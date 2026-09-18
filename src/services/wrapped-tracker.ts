@@ -47,6 +47,35 @@ export default class WrappedTracker {
   }
 
   /**
+   * Call this once, right when a track starts playing (same moment as
+   * setTrackDuration) — snapshots who's actually in the voice channel right
+   * now, so passive listeners get Wrapped credit too, not just whoever
+   * typed the command. See PlayHistoryListener's schema comment for why
+   * this is its own table rather than a PlayHistory column.
+   */
+  async recordListeners(playHistoryId: number, guildId: string, requesterId: string | null, listenerUserIds: string[]): Promise<void> {
+    if (listenerUserIds.length === 0) {
+      return;
+    }
+
+    try {
+      await prisma.playHistoryListener.createMany({
+        data: listenerUserIds.map(userId => ({
+          playHistoryId,
+          guildId,
+          userId,
+          role: userId === requesterId ? 'REQUESTER' : 'LISTENER',
+        })),
+        skipDuplicates: true,
+      });
+    } catch (error) {
+      // Same reasoning as recordListenedDuration below -- stats bookkeeping
+      // must never interrupt playback.
+      console.warn('[Wrapped] failed to record listeners:', error);
+    }
+  }
+
+  /**
    * Call this when a track stops playing, however it stops (natural
    * end, skip, disconnect) — records actual listened time.
    */

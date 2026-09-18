@@ -100,3 +100,62 @@ describe('DjRecommender guild isolation', () => {
     }
   });
 });
+
+describe('DjRecommender no-repeat filter', () => {
+  it('excludes currently-queued tracks from the co-occurrence and same-artist candidate queries', async () => {
+    const prismaMock = makePrismaMock();
+    prismaMock.playHistory.findMany
+      .mockResolvedValueOnce([
+        {artist: 'Artist A', guildId: 'guild-1', playedAt: new Date(), youtubeId: 'seed-1'},
+      ])
+      .mockResolvedValueOnce([]);
+    prismaMock.trackCooccurrence.findMany.mockResolvedValue([]);
+
+    try {
+      const recommender = await loadDjRecommender(prismaMock);
+      await recommender.recommendNext('guild-1', 2, ['queued-1']).catch(() => undefined);
+
+      expect(prismaMock.trackCooccurrence.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({youtubeIdB: {notIn: expect.arrayContaining(['seed-1', 'queued-1'])}}),
+        }),
+      );
+      expect(prismaMock.playHistory.findMany).toHaveBeenNthCalledWith(2,
+        expect.objectContaining({
+          where: expect.objectContaining({youtubeId: {notIn: expect.arrayContaining(['seed-1', 'queued-1'])}}),
+        }),
+      );
+    } finally {
+      resetHarness();
+    }
+  });
+
+  it('falls back to allowing repeats of queued tracks rather than throwing when the exclusion empties the pool', async () => {
+    const prismaMock = makePrismaMock();
+    prismaMock.playHistory.findMany
+      // Seed history
+      .mockResolvedValueOnce([
+        {artist: 'Artist A', guildId: 'guild-1', playedAt: new Date(), youtubeId: 'only-track'},
+      ])
+      // Same-artist signal, empty
+      .mockResolvedValueOnce([])
+      // First fallback tier (excludes played + queued) -- empty, tiny library
+      .mockResolvedValueOnce([])
+      // Second fallback tier (excludes only played) -- has the one track, since
+      // it's only sitting in the queue, not actually played yet
+      .mockResolvedValueOnce([
+        {artist: 'Artist A', guildId: 'guild-1', title: 'Only Track', youtubeId: 'only-track', playedAt: new Date()},
+      ]);
+    prismaMock.trackCooccurrence.findMany.mockResolvedValue([]);
+
+    try {
+      const recommender = await loadDjRecommender(prismaMock);
+      const picks = await recommender.recommendNext('guild-1', 1, ['only-track']);
+
+      expect(picks).toHaveLength(1);
+      expect(picks[0].youtubeId).toBe('only-track');
+    } finally {
+      resetHarness();
+    }
+  });
+});

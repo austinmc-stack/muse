@@ -2,6 +2,7 @@ import getYouTubeID from 'get-youtube-id';
 import {EmbedBuilder} from 'discord.js';
 import Player, {MediaSource, QueuedSong, STATUS} from '../services/player.js';
 import type {RecommendedTrack} from '../services/dj-recommender.js';
+import type {GuildDigestSummary} from '../services/wrapped-service.js';
 import getProgressBar from './get-progress-bar.js';
 import {prettyTime} from './time.js';
 import {truncate} from './string.js';
@@ -95,6 +96,38 @@ export const buildDjAddedSongsEmbed = (picks: RecommendedTrack[]): EmbedBuilder 
 export const buildDjOutOfRecommendationsEmbed = (): EmbedBuilder => new EmbedBuilder()
   .setColor('DarkPurple')
   .setDescription('🎧 **DJ ran out of fresh recommendations for this server.**\nPlay something with `/play` to keep the music going!');
+
+export const buildStatsDigestEmbed = (summary: GuildDigestSummary, periodLabel: string): EmbedBuilder => {
+  const embed = new EmbedBuilder()
+    .setColor('DarkGold')
+    .setTitle(`📊 Listening stats — ${periodLabel}`)
+    .setDescription(`**${summary.totalTracksPlayed}** plays, **${summary.totalMinutesListened}** total minutes listened`);
+
+  if (summary.topListeners.length > 0) {
+    embed.addFields({
+      name: 'Top listeners',
+      value: summary.topListeners
+        .map((l, i) => `${i + 1}. <@${l.userId}> — ${l.minutesListened}m (${l.trackCount} plays)`)
+        .join('\n'),
+    });
+  }
+
+  if (summary.topTracks.length > 0) {
+    embed.addFields({
+      name: 'Top tracks',
+      value: summary.topTracks.map((t, i) => `${i + 1}. ${t.title} — ${t.artist} (${t.playCount}x)`).join('\n'),
+    });
+  }
+
+  if (summary.topArtists.length > 0) {
+    embed.addFields({
+      name: 'Top artists',
+      value: summary.topArtists.map((a, i) => `${i + 1}. ${a.artist} (${a.playCount}x)`).join('\n'),
+    });
+  }
+
+  return embed;
+};
 
 export const buildQueueEmbed = (player: Player, page: number, pageSize: number): EmbedBuilder => {
   if (page < 1) {

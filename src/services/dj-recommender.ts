@@ -32,8 +32,13 @@ export default class DjRecommender {
    * Pick `count` next tracks for a guild's auto-queue. Throws if there's
    * no history yet (caller should catch and just skip auto-queueing —
    * see dj-auto-queue.ts).
+   *
+   * `avoidYoutubeIds` is the guild's currently-playing/queued tracks —
+   * they haven't hit PlayHistory yet (that's only written once a track
+   * actually starts playing), so without this, back-to-back auto-queue
+   * calls before those plays land can recommend the same track twice.
    */
-  async recommendNext(guildId: string, count: number): Promise<RecommendedTrack[]> {
+  async recommendNext(guildId: string, count: number, avoidYoutubeIds: Iterable<string> = []): Promise<RecommendedTrack[]> {
     const history = await prisma.playHistory.findMany({
       where: {guildId, skipped: false},
       orderBy: {playedAt: 'desc'},
@@ -45,6 +50,10 @@ export default class DjRecommender {
     }
 
     const alreadyPlayed = new Set(history.map(h => h.youtubeId));
+    // Soft exclusion (on top of alreadyPlayed) so a tiny library that's
+    // already fully queued still gets recommendations, just allowing repeats,
+    // rather than silently failing to queue anything — see fallback below.
+    const excluded = new Set([...alreadyPlayed, ...avoidYoutubeIds]);
     const seeds = history.slice(0, 3);
     const recentArtists = new Set(history.slice(0, 5).map(h => h.artist));
 
@@ -61,7 +70,7 @@ export default class DjRecommender {
         where: {
           guildId,
           youtubeIdA: seed.youtubeId,
-          youtubeIdB: {notIn: [...alreadyPlayed]},
+          youtubeIdB: {notIn: [...excluded]},
         },
         orderBy: {score: 'desc'},
         take: 20,
@@ -87,7 +96,7 @@ export default class DjRecommender {
         where: {
           guildId,
           artist: seed.artist,
-          youtubeId: {notIn: [...alreadyPlayed]},
+          youtubeId: {notIn: [...excluded]},
         },
         distinct: ['youtubeId'],
         take: 20,
@@ -114,19 +123,40 @@ export default class DjRecommender {
       // yet (e.g. played in a session > 1hr after everything else, so the
       // hour-window never grouped them with anything). Confirmed real case.
       //
-      // Fallback: pick randomly from the guild's full play history, excluding
-      // the last 10 played tracks to avoid immediate repeats. Gets smarter
-      // automatically as history and co-occurrence data accumulates.
-      const fallbackPool = await prisma.playHistory.findMany({
-        where: {
-          guildId,
-          skipped: false,
-          youtubeId: {notIn: [...alreadyPlayed]},
-        },
+      // Fallback: pick randomly from the guild's full play history. Gets
+      // smarter automatically as history and co-occurrence data accumulates.
+      //
+      // Excluding `excluded` (played + currently queued) is ideal, but a small
+      // library can run out of unique tracks entirely under that exclusion —
+      // in that case, relax it step by step rather than queueing nothing.
+      let fallbackPool = await prisma.playHistory.findMany({
+        where: {guildId, skipped: false, youtubeId: {notIn: [...excluded]}},
         distinct: ['youtubeId'],
         orderBy: {playedAt: 'desc'},
         take: 50,
       });
+
+      if (fallbackPool.length === 0) {
+        // Allow repeating a currently-queued track (not ideal, but better than
+        // queueing nothing) — still avoid the track that JUST played.
+        fallbackPool = await prisma.playHistory.findMany({
+          where: {guildId, skipped: false, youtubeId: {notIn: [...alreadyPlayed]}},
+          distinct: ['youtubeId'],
+          orderBy: {playedAt: 'desc'},
+          take: 50,
+        });
+      }
+
+      if (fallbackPool.length === 0) {
+        // Library is smaller than `alreadyPlayed`'s lookback window — allow
+        // any repeat rather than silently failing to auto-queue anything.
+        fallbackPool = await prisma.playHistory.findMany({
+          where: {guildId, skipped: false},
+          distinct: ['youtubeId'],
+          orderBy: {playedAt: 'desc'},
+          take: 50,
+        });
+      }
 
       if (fallbackPool.length === 0) {
         throw new Error('no candidates found and fallback pool is empty — not enough unique tracks in history yet');

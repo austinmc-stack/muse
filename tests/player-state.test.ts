@@ -559,7 +559,7 @@ describe('Player DJ auto-queue exhaustion notice', () => {
 
     await getPrivateState(player).maybeAutoQueue();
 
-    expect(djRecommender.recommendNext).toHaveBeenCalledWith(GUILD_ID, 2);
+    expect(djRecommender.recommendNext).toHaveBeenCalledWith(GUILD_ID, 2, []);
     expect(send).toHaveBeenCalledWith({embeds: [{title: 'dj-out-of-recs'}]});
   });
 
@@ -577,6 +577,59 @@ describe('Player DJ auto-queue exhaustion notice', () => {
 
     expect(send).toHaveBeenCalledWith({embeds: [{title: 'dj-added'}]});
     expect(player.getCurrent()?.title).toBe('Track A');
+  });
+});
+
+describe('Player Wrapped listener tracking', () => {
+  it('records everyone present as a listener, tagging the requester and excluding bots', async () => {
+    const voiceConnection = makeVoiceConnection();
+    const wrappedTracker = {
+      recordListenedDuration: vi.fn().mockResolvedValue(undefined),
+      recordListeners: vi.fn().mockResolvedValue(undefined),
+      setTrackDuration: vi.fn().mockResolvedValue(7),
+    };
+    const player = new Player({} as never, GUILD_ID, undefined, undefined, wrappedTracker as never);
+    player.voiceConnection = voiceConnection as never;
+    Object.assign(player, {
+      currentChannel: {
+        members: new Map([
+          ['bot-1', {id: 'bot-1', user: {bot: true}}],
+          ['human-1', {id: 'human-1', user: {bot: false}}],
+          ['human-2', {id: 'human-2', user: {bot: false}}],
+        ]),
+      },
+      getStream: vi.fn().mockResolvedValue(Readable.from([])),
+    });
+
+    player.add(makeSong('Song', {requestedBy: 'human-1'}));
+    await player.play();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(wrappedTracker.recordListeners).toHaveBeenCalledWith(7, GUILD_ID, 'human-1', expect.arrayContaining(['human-1', 'human-2']));
+    const listenerIds = wrappedTracker.recordListeners.mock.calls[0][3] as string[];
+    expect(listenerIds).toHaveLength(2);
+    expect(listenerIds).not.toContain('bot-1');
+  });
+
+  it('passes a null requester for a DJ auto-pick', async () => {
+    const voiceConnection = makeVoiceConnection();
+    const wrappedTracker = {
+      recordListenedDuration: vi.fn().mockResolvedValue(undefined),
+      recordListeners: vi.fn().mockResolvedValue(undefined),
+      setTrackDuration: vi.fn().mockResolvedValue(9),
+    };
+    const player = new Player({} as never, GUILD_ID, undefined, undefined, wrappedTracker as never);
+    player.voiceConnection = voiceConnection as never;
+    Object.assign(player, {
+      currentChannel: {members: new Map([['human-1', {id: 'human-1', user: {bot: false}}]])},
+      getStream: vi.fn().mockResolvedValue(Readable.from([])),
+    });
+
+    player.add(makeSong('DJ pick', {requestedBy: 'dj'}));
+    await player.play();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(wrappedTracker.recordListeners).toHaveBeenCalledWith(9, GUILD_ID, null, ['human-1']);
   });
 });
 

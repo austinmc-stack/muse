@@ -22,6 +22,10 @@ export default class implements Command {
         .setMinValue(1)
         .setRequired(false));
 
+  public get isPlayerCommand() {
+    return true;
+  }
+
   private readonly playerManager: PlayerManager;
 
   constructor(@inject(TYPES.Managers.Player) playerManager: PlayerManager) {

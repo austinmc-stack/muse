@@ -5,10 +5,10 @@ import Bot from './bot.js';
 import {Client, GatewayIntentBits} from 'discord.js';
 import ConfigProvider from './services/config.js';
 import DjRecommender from './services/dj-recommender.js';
+import MessageCleanup from './services/message-cleanup.js';
 import WrappedTracker from './services/wrapped-tracker.js';
 import WrappedService from './services/wrapped-service.js';
 import WrappedCardRenderer from './services/wrapped-card-renderer.js';
-import Wrapped from './commands/wrapped.js';
 
 // Managers
 import PlayerManager from './managers/player.js';
@@ -27,6 +27,7 @@ import Disconnect from './commands/disconnect.js';
 import Dj from './commands/dj.js';
 import Favorites from './commands/favorites.js';
 import ForwardSeek from './commands/fseek.js';
+import History from './commands/history.js';
 import LoopQueue from './commands/loop-queue.js';
 import Loop from './commands/loop.js';
 import Move from './commands/move.js';
@@ -41,6 +42,7 @@ import Resume from './commands/resume.js';
 import Seek from './commands/seek.js';
 import Shuffle from './commands/shuffle.js';
 import Skip from './commands/skip.js';
+import Stats from './commands/stats.js';
 import Stop from './commands/stop.js';
 import Unskip from './commands/unskip.js';
 import Volume from './commands/volume.js';
@@ -71,6 +73,7 @@ container.bind<GetSongs>(TYPES.Services.GetSongs).to(GetSongs).inSingletonScope(
 container.bind<AddQueryToQueue>(TYPES.Services.AddQueryToQueue).to(AddQueryToQueue).inSingletonScope();
 container.bind<YoutubeAPI>(TYPES.Services.YoutubeAPI).to(YoutubeAPI).inSingletonScope();
 container.bind<DjRecommender>(TYPES.Services.DjRecommender).to(DjRecommender).inSingletonScope();
+container.bind<MessageCleanup>(TYPES.Services.MessageCleanup).to(MessageCleanup).inSingletonScope();
 container.bind<WrappedTracker>(TYPES.Services.WrappedTracker).to(WrappedTracker).inSingletonScope();
 container.bind<WrappedService>(TYPES.Services.WrappedService).to(WrappedService).inSingletonScope();
 container.bind<WrappedCardRenderer>(TYPES.Services.WrappedCardRenderer).to(WrappedCardRenderer).inSingletonScope();
@@ -90,6 +93,7 @@ if (config.SPOTIFY_CLIENT_ID !== '' && config.SPOTIFY_CLIENT_SECRET !== '') {
   Dj,
   Favorites,
   ForwardSeek,
+  History,
   LoopQueue,
   Loop,
   Move,
@@ -104,10 +108,10 @@ if (config.SPOTIFY_CLIENT_ID !== '' && config.SPOTIFY_CLIENT_SECRET !== '') {
   Seek,
   Shuffle,
   Skip,
+  Stats,
   Stop,
   Unskip,
   Volume,
-  Wrapped,
 ].forEach(command => {
   container.bind<Command>(TYPES.Command).to(command).inSingletonScope();
 });

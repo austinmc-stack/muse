@@ -20,6 +20,10 @@ export default class implements Command {
 
   public requiresVC = true;
 
+  public get isPlayerCommand() {
+    return true;
+  }
+
   private readonly playerManager: PlayerManager;
 
   constructor(@inject(TYPES.Managers.Player) playerManager: PlayerManager) {

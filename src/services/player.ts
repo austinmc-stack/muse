@@ -38,6 +38,7 @@ import {Setting} from '@prisma/client';
 import DjRecommender from './dj-recommender.js';
 import {getDjSettings} from '../utils/get-dj-settings.js';
 import WrappedTracker from './wrapped-tracker.js';
+import MessageCleanup from './message-cleanup.js';
 
 export {DEFAULT_VOLUME, MediaSource, STATUS};
 export type {AgeRestrictedFallbackResolver, PlayerEvents, QueuedPlaylist, QueuedSong, SongMetadata};
@@ -133,6 +134,7 @@ export default class {
     ageRestrictedFallbackResolver?: AgeRestrictedFallbackResolver,
     private readonly djRecommender?: DjRecommender,
     private readonly wrappedTracker?: WrappedTracker,
+    private readonly messageCleanup?: MessageCleanup,
   ) {
     this.fileCache = fileCache;
     this.guildId = guildId;
@@ -731,6 +733,17 @@ export default class {
           currentSong.length * 1000, // QueuedSong.length is in SECONDS
         ).then(id => {
           this.currentPlayHistoryId = id;
+
+          if (id !== null && this.currentChannel) {
+            const requesterId = currentSong.requestedBy === 'dj' ? null : currentSong.requestedBy;
+            const listenerUserIds = [...this.currentChannel.members.values()]
+              .filter(member => !member.user.bot)
+              .map(member => member.id);
+
+            void this.wrappedTracker!.recordListeners(id, this.guildId, requesterId, listenerUserIds).catch(error => {
+              debug('Failed to record listeners for Wrapped:', error);
+            });
+          }
         }).catch(error => {
           debug('Failed to set track duration for Wrapped:', error);
         });
@@ -1050,9 +1063,7 @@ export default class {
       const settings = await getGuildSettings(this.guildId);
       const {autoAnnounceNextSong} = settings;
       if (autoAnnounceNextSong && this.currentChannel) {
-        await this.currentChannel.send({
-          embeds: [buildPlayingMessageEmbed(this)],
-        });
+        await this.sendCleanupCandidate({embeds: [buildPlayingMessageEmbed(this)]}, 'dj');
       }
     }
   }
@@ -1062,6 +1073,10 @@ export default class {
     this.stopTrackingPosition();
     this.status = STATUS.IDLE;
     this.stopAudioPlayer(true);
+
+    if (this.messageCleanup) {
+      await this.messageCleanup.sweep(this.guildId);
+    }
 
     const settings = await getGuildSettings(this.guildId);
 
@@ -1315,7 +1330,13 @@ export default class {
     }
 
     try {
-      const picks = await this.djRecommender.recommendNext(this.guildId, settings.minQueueSize);
+      const current = this.getCurrent();
+      const avoidYoutubeIds = [
+        ...(current ? [current.url] : []),
+        ...this.getQueue().map(song => song.url),
+      ];
+
+      const picks = await this.djRecommender.recommendNext(this.guildId, settings.minQueueSize, avoidYoutubeIds);
 
       for (const pick of picks) {
         this.add({
@@ -1334,18 +1355,27 @@ export default class {
       }
 
       if (picks.length > 0 && this.currentChannel) {
-        await this.currentChannel.send({
-          embeds: [buildDjAddedSongsEmbed(picks)],
-        });
+        await this.sendCleanupCandidate({embeds: [buildDjAddedSongsEmbed(picks)]}, 'dj');
       }
     } catch (error) {
       debug(`DJ auto-queue skipped for guild ${this.guildId}:`, error);
 
       if (this.currentChannel) {
-        await this.currentChannel.send({
-          embeds: [buildDjOutOfRecommendationsEmbed()],
-        });
+        await this.sendCleanupCandidate({embeds: [buildDjOutOfRecommendationsEmbed()]}, 'dj');
       }
+    }
+  }
+
+  /** Send a bot message that's a cleanup candidate under the guild's configured cleanup mode. */
+  private async sendCleanupCandidate(payload: Parameters<VoiceChannel['send']>[0], category: 'dj' | 'control'): Promise<void> {
+    if (!this.currentChannel) {
+      return;
+    }
+
+    if (this.messageCleanup) {
+      await this.messageCleanup.send(this.currentChannel, payload, category);
+    } else {
+      await this.currentChannel.send(payload);
     }
   }
 

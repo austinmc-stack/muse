@@ -82,6 +82,63 @@ export default class implements Command {
         .setMaxValue(30)
         .setRequired(true)))
     .addSubcommand(subcommand => subcommand
+      .setName('set-cleanup-mode')
+      .setDescription('set which bot messages get auto-deleted')
+      .addStringOption(option => option
+        .setName('mode')
+        .setDescription('none: never clean up, dj-only: clean up DJ commentary/announcements, all: clean up all bot messages')
+        .setRequired(true)
+        .addChoices(
+          {name: 'none', value: 'NONE'},
+          {name: 'dj-only', value: 'DJ_ONLY'},
+          {name: 'all', value: 'ALL_BOT_MESSAGES'},
+        )))
+    .addSubcommand(subcommand => subcommand
+      .setName('set-cleanup-delay')
+      .setDescription('set how long a cleanup-eligible message stays before it\'s auto-deleted')
+      .addIntegerOption(option => option
+        .setName('seconds')
+        .setDescription('delay in seconds')
+        .setRequired(true)
+        .setMinValue(1)))
+    .addSubcommand(subcommand => subcommand
+      .setName('set-cleanup-on-session-end')
+      .setDescription('set whether tracked messages get swept up when the DJ session/queue ends')
+      .addBooleanOption(option => option
+        .setName('value')
+        .setDescription('whether to sweep tracked messages when the session ends')
+        .setRequired(true)))
+    .addSubcommand(subcommand => subcommand
+      .setName('set-stats-digest-enabled')
+      .setDescription('turn the scheduled stats digest on or off')
+      .addBooleanOption(option => option
+        .setName('value')
+        .setDescription('whether the scheduled digest should run')
+        .setRequired(true)))
+    .addSubcommand(subcommand => subcommand
+      .setName('set-stats-digest-cadence')
+      .setDescription('set how often the scheduled stats digest sends, in days')
+      .addIntegerOption(option => option
+        .setName('days')
+        .setDescription('cadence in days')
+        .setMinValue(1)
+        .setMaxValue(90)
+        .setRequired(true)))
+    .addSubcommand(subcommand => subcommand
+      .setName('set-stats-webhook')
+      .setDescription('set (or clear) the webhook URL the scheduled stats digest posts to')
+      .addStringOption(option => option
+        .setName('url')
+        .setDescription('webhook URL, or "none" to clear it')
+        .setRequired(true)))
+    .addSubcommand(subcommand => subcommand
+      .setName('set-stats-dm-owner')
+      .setDescription('set whether the scheduled stats digest also DMs the server owner')
+      .addBooleanOption(option => option
+        .setName('value')
+        .setDescription('whether to DM the server owner')
+        .setRequired(true)))
+    .addSubcommand(subcommand => subcommand
       .setName('get')
       .setDescription('show all settings'));
 
@@ -247,6 +304,109 @@ export default class implements Command {
         break;
       }
 
+      case 'set-cleanup-mode': {
+        const mode = interaction.options.getString('mode', true) as 'NONE' | 'DJ_ONLY' | 'ALL_BOT_MESSAGES';
+
+        await prisma.setting.update({
+          where: {
+            guildId: interaction.guild!.id,
+          },
+          data: {
+            cleanupMode: mode,
+          },
+        });
+
+        await interaction.reply('👍 cleanup mode updated');
+
+        break;
+      }
+
+      case 'set-cleanup-delay': {
+        const value = interaction.options.getInteger('seconds')!;
+
+        await prisma.setting.update({
+          where: {
+            guildId: interaction.guild!.id,
+          },
+          data: {
+            ephemeralDelaySeconds: value,
+          },
+        });
+
+        await interaction.reply('👍 cleanup delay updated');
+
+        break;
+      }
+
+      case 'set-cleanup-on-session-end': {
+        const value = interaction.options.getBoolean('value')!;
+
+        await prisma.setting.update({
+          where: {
+            guildId: interaction.guild!.id,
+          },
+          data: {
+            cleanupOnSessionEnd: value,
+          },
+        });
+
+        await interaction.reply('👍 cleanup-on-session-end setting updated');
+
+        break;
+      }
+
+      case 'set-stats-digest-enabled': {
+        const value = interaction.options.getBoolean('value', true);
+
+        await prisma.setting.update({
+          where: {guildId: interaction.guild!.id},
+          data: {statsDigestEnabled: value},
+        });
+
+        await interaction.reply('👍 scheduled stats digest setting updated');
+
+        break;
+      }
+
+      case 'set-stats-digest-cadence': {
+        const days = interaction.options.getInteger('days', true);
+
+        await prisma.setting.update({
+          where: {guildId: interaction.guild!.id},
+          data: {statsDigestCadenceDays: days},
+        });
+
+        await interaction.reply('👍 stats digest cadence updated');
+
+        break;
+      }
+
+      case 'set-stats-webhook': {
+        const url = interaction.options.getString('url', true).trim();
+
+        await prisma.setting.update({
+          where: {guildId: interaction.guild!.id},
+          data: {statsWebhookUrl: url.toLowerCase() === 'none' ? null : url},
+        });
+
+        await interaction.reply('👍 stats digest webhook updated');
+
+        break;
+      }
+
+      case 'set-stats-dm-owner': {
+        const value = interaction.options.getBoolean('value', true);
+
+        await prisma.setting.update({
+          where: {guildId: interaction.guild!.id},
+          data: {statsDigestDmOwner: value},
+        });
+
+        await interaction.reply('👍 stats digest DM-owner setting updated');
+
+        break;
+      }
+
       case 'get': {
         const embed = new EmbedBuilder().setTitle('Config');
 
@@ -264,6 +424,13 @@ export default class implements Command {
           'Default queue page size': config.defaultQueuePageSize,
           'Reduce volume when people speak': config.turnDownVolumeWhenPeopleSpeak ? 'yes' : 'no',
           'Reduce volume when people speak target': config.turnDownVolumeWhenPeopleSpeakTarget,
+          'Cleanup mode': config.cleanupMode,
+          'Cleanup delay': `${config.ephemeralDelaySeconds}s`,
+          'Cleanup on session end': config.cleanupOnSessionEnd ? 'yes' : 'no',
+          'Scheduled stats digest': config.statsDigestEnabled ? 'yes' : 'no',
+          'Stats digest cadence': `${config.statsDigestCadenceDays} day(s)`,
+          'Stats digest webhook': config.statsWebhookUrl ?? 'not set',
+          'Stats digest DMs server owner': config.statsDigestDmOwner ? 'yes' : 'no',
         };
 
         let description = '';

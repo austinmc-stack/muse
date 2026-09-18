@@ -119,6 +119,7 @@ type Handler = (...args: never[]) => unknown;
 
 interface StructuralCommand {
   execute?: ReturnType<typeof vi.fn>;
+  isPlayerCommand?: boolean;
   requiresVC?: boolean | ((interaction: StructuralInteraction) => boolean);
   slashCommand: {
     name: string;
@@ -131,6 +132,7 @@ interface StructuralInteraction {
   commandName: string;
   deferred: boolean;
   editReply: ReturnType<typeof vi.fn>;
+  fetchReply: ReturnType<typeof vi.fn>;
   guild: object | null;
   guildId: string | null;
   id: string;
@@ -145,6 +147,11 @@ interface StructuralInteraction {
   type: number;
   user: {id: string};
 }
+
+const makeReplyMessage = (ephemeral: boolean) => ({
+  flags: {has: () => ephemeral},
+  id: 'reply-message-id',
+});
 
 const makeCommand = (name: string, overrides: Partial<StructuralCommand> = {}): StructuralCommand => ({
   execute: vi.fn().mockResolvedValue(undefined),
@@ -199,6 +206,7 @@ const makeInteraction = (commandName: string, overrides: Partial<StructuralInter
   commandName,
   deferred: false,
   editReply: vi.fn().mockResolvedValue(undefined),
+  fetchReply: vi.fn().mockResolvedValue(makeReplyMessage(false)),
   guild: {channels: {cache: new Collection()}},
   guildId: 'guild-id',
   id: `interaction-${++nextInteractionId}`,
@@ -215,7 +223,12 @@ const makeInteraction = (commandName: string, overrides: Partial<StructuralInter
   ...overrides,
 });
 
-const registerBot = async (registerCommandsOnBot: boolean, commands = makeCommandSet(), guildIds: string[] = []) => {
+const registerBot = async (
+  registerCommandsOnBot: boolean,
+  commands = makeCommandSet(),
+  guildIds: string[] = [],
+  messageCleanup = {track: vi.fn().mockResolvedValue(undefined)},
+) => {
   const config = makeConfig(registerCommandsOnBot, 'https://example.test/stream');
   const clientState = makeClient(guildIds);
 
@@ -232,10 +245,10 @@ const registerBot = async (registerCommandsOnBot: boolean, commands = makeComman
     throw new Error('unexpected container lookup');
   });
 
-  const bot = new Bot(clientState.client as never, config as never);
+  const bot = new Bot(clientState.client as never, config as never, messageCleanup as never);
   await bot.register();
 
-  return {...clientState, commands, config};
+  return {...clientState, commands, config, messageCleanup};
 };
 
 const invoke = async (handlers: Map<string, Handler>, event: string, ...args: unknown[]) => {
@@ -484,6 +497,39 @@ describe('interaction boundaries', () => {
 
     expect(interaction.editReply).toHaveBeenCalledWith('🚫 ope: command failure');
     expect(interaction.reply).not.toHaveBeenCalled();
+  });
+});
+
+describe('player-command cleanup tracking', () => {
+  it('tracks a non-ephemeral reply from a player command for cleanup', async () => {
+    const command = makeCommand('play', {isPlayerCommand: true});
+    const {handlers, messageCleanup} = await registerBot(true, [command]);
+    const message = makeReplyMessage(false);
+    const interaction = makeInteraction('play', {replied: true, fetchReply: vi.fn().mockResolvedValue(message)});
+
+    await invoke(handlers, 'interactionCreate', interaction);
+
+    expect(messageCleanup.track).toHaveBeenCalledWith(message, 'guild-id', 'control');
+  });
+
+  it('does not track an ephemeral reply from a player command', async () => {
+    const command = makeCommand('play', {isPlayerCommand: true});
+    const {handlers, messageCleanup} = await registerBot(true, [command]);
+    const interaction = makeInteraction('play', {replied: true, fetchReply: vi.fn().mockResolvedValue(makeReplyMessage(true))});
+
+    await invoke(handlers, 'interactionCreate', interaction);
+
+    expect(messageCleanup.track).not.toHaveBeenCalled();
+  });
+
+  it('does not track a reply from a non-player command', async () => {
+    const command = makeCommand('config');
+    const {handlers, messageCleanup} = await registerBot(true, [command]);
+    const interaction = makeInteraction('config', {replied: true});
+
+    await invoke(handlers, 'interactionCreate', interaction);
+
+    expect(messageCleanup.track).not.toHaveBeenCalled();
   });
 });
 

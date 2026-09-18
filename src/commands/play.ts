@@ -17,6 +17,10 @@ export default class implements Command {
 
   public requiresVC = true;
 
+  public get isPlayerCommand() {
+    return true;
+  }
+
   private readonly spotify?: Spotify;
   private readonly cache: KeyValueCacheProvider;
   private readonly addQueryToQueue: AddQueryToQueue;

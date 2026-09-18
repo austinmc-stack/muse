@@ -23,19 +23,33 @@ model KeyValueCache {
   updatedAt DateTime @updatedAt
 }
 
+enum CleanupMode {
+  NONE
+  DJ_ONLY
+  ALL_BOT_MESSAGES
+}
+
 model Setting {
-  guildId                             String   @id
-  playlistLimit                       Int      @default(50)
-  secondsToWaitAfterQueueEmpties      Int      @default(30)
-  leaveIfNoListeners                  Boolean  @default(true)
-  queueAddResponseEphemeral           Boolean  @default(false)
-  autoAnnounceNextSong                Boolean  @default(false)
-  defaultVolume                       Int      @default(100)
-  defaultQueuePageSize                Int      @default(10)
-  turnDownVolumeWhenPeopleSpeak       Boolean  @default(false)
-  turnDownVolumeWhenPeopleSpeakTarget Int      @default(20)
-  createdAt                           DateTime @default(now())
-  updatedAt                           DateTime @updatedAt
+  guildId                             String      @id
+  playlistLimit                       Int         @default(50)
+  secondsToWaitAfterQueueEmpties      Int         @default(30)
+  leaveIfNoListeners                  Boolean     @default(true)
+  queueAddResponseEphemeral           Boolean     @default(false)
+  autoAnnounceNextSong                Boolean     @default(false)
+  defaultVolume                       Int         @default(100)
+  defaultQueuePageSize                Int         @default(10)
+  turnDownVolumeWhenPeopleSpeak       Boolean     @default(false)
+  turnDownVolumeWhenPeopleSpeakTarget Int         @default(20)
+  cleanupMode                         CleanupMode @default(NONE)
+  ephemeralDelaySeconds               Int         @default(45)
+  cleanupOnSessionEnd                 Boolean     @default(true)
+  statsDigestEnabled                  Boolean     @default(false)
+  statsDigestCadenceDays              Int         @default(7)
+  statsWebhookUrl                     String?
+  statsDigestDmOwner                  Boolean     @default(false)
+  statsDigestLastSentAt               DateTime?
+  createdAt                           DateTime    @default(now())
+  updatedAt                           DateTime    @updatedAt
 }
 
 model FavoriteQuery {
@@ -78,6 +92,37 @@ model PlayHistory {
   @@index([guildId, playedAt])
   @@index([youtubeId])
   @@index([requestedBy, playedAt])
+
+  listeners PlayHistoryListener[]
+}
+
+enum ListenerRole {
+  REQUESTER
+  LISTENER
+}
+
+// Snapshot of who was actually in the voice channel when a track STARTED
+// (see player.ts's onAudioPlayerIdle -> recordListeners call). One row per
+// person present per play, so Wrapped can credit passive listeners, not
+// just whoever typed the command -- that's the whole point of this table
+// existing separately from PlayHistory, which stays one-row-per-play so
+// DjRecommender/MessageCleanup/etc keep their existing "one row = one play"
+// assumptions intact.
+//
+// ponytail: doesn't track mid-track join/leave -- everyone present at track
+// start is credited the track's full msPlayed, even if they left early.
+// Upgrade path: record each listener's own join/leave timestamps if that
+// ever matters enough to justify the added complexity.
+model PlayHistoryListener {
+  id            Int          @id @default(autoincrement())
+  playHistoryId Int
+  playHistory   PlayHistory  @relation(fields: [playHistoryId], references: [id])
+  guildId       String
+  userId        String
+  role          ListenerRole
+
+  @@unique([playHistoryId, userId])
+  @@index([guildId, userId])
 }
 
 // Precomputed co-occurrence, refreshed periodically rather than

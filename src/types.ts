@@ -15,6 +15,7 @@ export const TYPES = {
     YoutubeAPI: Symbol('YoutubeAPI'),
     SpotifyAPI: Symbol('SpotifyAPI'),
     DjRecommender: Symbol('DjRecommender'),
+    MessageCleanup: Symbol('MessageCleanup'),
     WrappedTracker: Symbol('WrappedTracker'),
     WrappedService: Symbol('WrappedService'),
     WrappedCardRenderer: Symbol('WrappedCardRenderer'),

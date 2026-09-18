@@ -1,4 +1,4 @@
-import {Client, Collection, User} from 'discord.js';
+import {ChatInputCommandInteraction, Client, Collection, MessageFlags, User} from 'discord.js';
 import {inject, injectable} from 'inversify';
 import ora from 'ora';
 import {TYPES} from './types.js';
@@ -14,6 +14,7 @@ import {generateDependencyReport} from '@discordjs/voice';
 import {REST} from '@discordjs/rest';
 import {Routes} from 'discord-api-types/v10';
 import registerCommandsOnGuild from './utils/register-commands-on-guild.js';
+import MessageCleanup from './services/message-cleanup.js';
 
 const sanitizeErrorDetail = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
@@ -64,7 +65,11 @@ export default class {
   // so a redelivered dispatch is dropped instead of re-running the command.
   private readonly recentInteractionIds = new Set<string>();
 
-  constructor(@inject(TYPES.Client) client: Client, @inject(TYPES.Config) config: Config) {
+  constructor(
+    @inject(TYPES.Client) client: Client,
+    @inject(TYPES.Config) config: Config,
+    @inject(TYPES.Services.MessageCleanup) private readonly messageCleanup: MessageCleanup,
+  ) {
     this.client = client;
     this.config = config;
     this.shouldRegisterCommandsOnBot = config.REGISTER_COMMANDS_ON_BOT;
@@ -123,6 +128,12 @@ export default class {
 
           if (command.execute) {
             await command.execute(interaction);
+          }
+
+          if (command.isPlayerCommand && (interaction.replied || interaction.deferred)) {
+            // Best-effort: a command's reply isn't essential to track, so a
+            // failure here (e.g. the interaction expired) shouldn't surface.
+            await this.trackReplyForCleanup(interaction).catch(() => undefined);
           }
         } else if (interaction.isButton()) {
           const command = this.commandsByButtonId.get(interaction.customId);
@@ -231,6 +242,21 @@ export default class {
   // Must be called synchronously (no await before it) so a back-to-back
   // redelivery can't slip through while the first dispatch's handler is
   // still on its first `await`.
+  // Skips ephemeral replies -- they're only visible to the command's own
+  // user already, and aren't deletable the same way as a normal channel message.
+  private async trackReplyForCleanup(interaction: ChatInputCommandInteraction): Promise<void> {
+    if (!interaction.guildId) {
+      return;
+    }
+
+    const message = await interaction.fetchReply();
+    if (message.flags.has(MessageFlags.Ephemeral)) {
+      return;
+    }
+
+    await this.messageCleanup.track(message, interaction.guildId, 'control');
+  }
+
   private isDuplicateInteraction(id: string): boolean {
     if (this.recentInteractionIds.has(id)) {
       return true;
