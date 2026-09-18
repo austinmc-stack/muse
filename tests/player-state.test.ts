@@ -580,6 +580,59 @@ describe('Player DJ auto-queue exhaustion notice', () => {
   });
 });
 
+describe('Player DJ channel resolution (djChannelId)', () => {
+  it('routes DJ messages to the configured djChannelId instead of the current voice channel', async () => {
+    dependencyMocks.getGuildSettings.mockResolvedValue({
+      autoAnnounceNextSong: false,
+      secondsToWaitAfterQueueEmpties: 0,
+      djChannelId: 'configured-channel-id',
+    });
+    const djRecommender = {
+      recommendNext: vi.fn().mockResolvedValue([
+        {artist: 'Artist A', title: 'Track A', youtubeId: 'track-a'},
+      ]),
+    };
+    const player = new Player({} as never, GUILD_ID, undefined, djRecommender as never);
+    const currentVcSend = vi.fn().mockResolvedValue(undefined);
+    const configuredChannelSend = vi.fn().mockResolvedValue(undefined);
+    const configuredChannel = {id: 'configured-channel-id', isTextBased: () => true, send: configuredChannelSend};
+    const fetch = vi.fn().mockResolvedValue(configuredChannel);
+    Object.assign(player, {
+      currentChannel: {send: currentVcSend, guild: {channels: {fetch}}},
+    });
+
+    await getPrivateState(player).maybeAutoQueue();
+
+    expect(fetch).toHaveBeenCalledWith('configured-channel-id');
+    expect(configuredChannelSend).toHaveBeenCalledWith({embeds: [{title: 'dj-added'}]});
+    expect(currentVcSend).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the current voice channel when the configured djChannelId can\'t be resolved', async () => {
+    dependencyMocks.getGuildSettings.mockResolvedValue({
+      autoAnnounceNextSong: false,
+      secondsToWaitAfterQueueEmpties: 0,
+      djChannelId: 'deleted-channel-id',
+    });
+    const djRecommender = {
+      recommendNext: vi.fn().mockResolvedValue([
+        {artist: 'Artist A', title: 'Track A', youtubeId: 'track-a'},
+      ]),
+    };
+    const player = new Player({} as never, GUILD_ID, undefined, djRecommender as never);
+    const currentVcSend = vi.fn().mockResolvedValue(undefined);
+    const fetch = vi.fn().mockRejectedValue(new Error('Unknown Channel'));
+    Object.assign(player, {
+      currentChannel: {send: currentVcSend, guild: {channels: {fetch}}},
+    });
+
+    await getPrivateState(player).maybeAutoQueue();
+
+    expect(fetch).toHaveBeenCalledWith('deleted-channel-id');
+    expect(currentVcSend).toHaveBeenCalledWith({embeds: [{title: 'dj-added'}]});
+  });
+});
+
 describe('Player Wrapped listener tracking', () => {
   it('records everyone present as a listener, tagging the requester and excluding bots', async () => {
     const voiceConnection = makeVoiceConnection();

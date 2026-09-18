@@ -8,7 +8,7 @@
 // rather than causing any error). Upgrade to a DB-backed TrackedMessage
 // table if that cosmetic gap ever actually matters.
 
-import {Message, VoiceChannel} from 'discord.js';
+import {GuildTextBasedChannel, Message, VoiceChannel} from 'discord.js';
 import {injectable} from 'inversify';
 import {getGuildSettings} from '../utils/get-guild-settings.js';
 
@@ -38,7 +38,7 @@ export default class MessageCleanup {
   private readonly byGuild = new Map<string, TrackedMessage[]>();
 
   /** Send a message and, if the guild's cleanup mode covers `category`, schedule its deletion. */
-  async send(channel: VoiceChannel, payload: Parameters<VoiceChannel['send']>[0], category: CleanupCategory): Promise<Message> {
+  async send(channel: GuildTextBasedChannel, payload: Parameters<GuildTextBasedChannel['send']>[0], category: CleanupCategory): Promise<Message> {
     const message = await channel.send(payload);
     await this.track(message, channel.guild.id, category);
     return message;

@@ -1,4 +1,4 @@
-import {VoiceChannel} from 'discord.js';
+import {GuildTextBasedChannel, VoiceChannel} from 'discord.js';
 import {Readable} from 'stream';
 import hasha from 'hasha';
 import {WriteStream} from 'fs-capacitor';
@@ -1381,15 +1381,46 @@ export default class {
 
   /** Send a bot message that's a cleanup candidate under the guild's configured cleanup mode. */
   private async sendCleanupCandidate(payload: Parameters<VoiceChannel['send']>[0], category: 'dj' | 'control'): Promise<void> {
-    if (!this.currentChannel) {
+    const channel = category === 'dj' ? await this.resolveDjChannel() : this.currentChannel;
+    if (!channel) {
       return;
     }
 
     if (this.messageCleanup) {
-      await this.messageCleanup.send(this.currentChannel, payload, category);
+      await this.messageCleanup.send(channel, payload, category);
     } else {
-      await this.currentChannel.send(payload);
+      await channel.send(payload);
     }
+  }
+
+  /**
+   * Resolves where DJ-category messages (auto-queue picks, out-of-recommendations
+   * notice, auto-announced next song) should be sent: the guild's configured
+   * `djChannelId` if set, else today's behavior of the current voice channel.
+   * Falls back to the current voice channel if the configured channel can't be
+   * fetched (deleted, permissions changed, etc) rather than dropping the message.
+   *
+   * A later task (auto-queue-on-skip) should call this same method instead of
+   * reading `this.currentChannel` directly, so both flows honor djChannelId.
+   */
+  private async resolveDjChannel(): Promise<GuildTextBasedChannel | undefined> {
+    if (!this.currentChannel) {
+      return undefined;
+    }
+
+    const settings = await getGuildSettings(this.guildId);
+    if (settings.djChannelId) {
+      try {
+        const channel = await this.currentChannel.guild.channels.fetch(settings.djChannelId);
+        if (channel?.isTextBased()) {
+          return channel;
+        }
+      } catch (error) {
+        debug(`Could not resolve configured DJ channel ${settings.djChannelId} for guild ${this.guildId}, falling back to current voice channel:`, error);
+      }
+    }
+
+    return this.currentChannel;
   }
 
   private stopAudioPlayer(force = false): void {

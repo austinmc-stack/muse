@@ -139,6 +139,16 @@ export default class implements Command {
         .setDescription('whether to DM the server owner')
         .setRequired(true)))
     .addSubcommand(subcommand => subcommand
+      .setName('set-dj-channel')
+      .setDescription('pin DJ messages (auto-queue, announcements) to one channel regardless of active voice channel')
+      .addChannelOption(option => option
+        .setName('channel')
+        .setDescription('channel DJ messages should be sent to (text or voice channel with text chat)')
+        .setRequired(true)))
+    .addSubcommand(subcommand => subcommand
+      .setName('clear-dj-channel')
+      .setDescription('reset DJ messages back to following the active voice channel'))
+    .addSubcommand(subcommand => subcommand
       .setName('get')
       .setDescription('show all settings'));
 
@@ -407,6 +417,30 @@ export default class implements Command {
         break;
       }
 
+      case 'set-dj-channel': {
+        const channel = interaction.options.getChannel('channel', true);
+
+        await prisma.setting.update({
+          where: {guildId: interaction.guild!.id},
+          data: {djChannelId: channel.id},
+        });
+
+        await interaction.reply(`👍 DJ messages will now go to <#${channel.id}>`);
+
+        break;
+      }
+
+      case 'clear-dj-channel': {
+        await prisma.setting.update({
+          where: {guildId: interaction.guild!.id},
+          data: {djChannelId: null},
+        });
+
+        await interaction.reply('👍 DJ messages will follow the active voice channel again');
+
+        break;
+      }
+
       case 'get': {
         const embed = new EmbedBuilder().setTitle('Config');
 
@@ -431,6 +465,7 @@ export default class implements Command {
           'Stats digest cadence': `${config.statsDigestCadenceDays} day(s)`,
           'Stats digest webhook': config.statsWebhookUrl ?? 'not set',
           'Stats digest DMs server owner': config.statsDigestDmOwner ? 'yes' : 'no',
+          'DJ message channel': config.djChannelId ? `<#${config.djChannelId}>` : 'follows active voice channel',
         };
 
         let description = '';
