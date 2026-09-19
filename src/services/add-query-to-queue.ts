@@ -238,31 +238,36 @@ export default class AddQueryToQueue {
     // (getSongs, the network/yt-dlp-bound part) through queue-add (in-memory,
     // expected cheap) as one path, matching how the brief names it.
     const searchAndQueueAddPerfStart = Date.now();
-    let [newSongs, extraMsg] = await this.getSongs.getSongs(query, playlistLimit, shouldSplitChapters);
+    let newSongs: SongMetadata[];
+    let extraMsg: string;
+    try {
+      [newSongs, extraMsg] = await this.getSongs.getSongs(query, playlistLimit, shouldSplitChapters);
 
-    if (newSongs.length === 0) {
-      throw new Error('no songs found');
-    }
+      if (newSongs.length === 0) {
+        throw new Error('no songs found');
+      }
 
-    if (shuffleAdditions) {
-      newSongs = shuffle(newSongs);
-    }
+      if (shuffleAdditions) {
+        newSongs = shuffle(newSongs);
+      }
 
-    if (this.config.ENABLE_SPONSORBLOCK) {
-      newSongs = await Promise.all(newSongs.map(this.skipNonMusicSegments.bind(this)));
-    }
+      if (this.config.ENABLE_SPONSORBLOCK) {
+        newSongs = await Promise.all(newSongs.map(this.skipNonMusicSegments.bind(this)));
+      }
 
-    newSongs.forEach((song, index) => {
-      player.add({
-        ...song,
-        addedInChannelId: interaction.channel!.id,
-        requestedBy: interaction.member!.user.id,
-      }, {
-        immediate: addToFrontOfQueue ?? false,
-        immediateOffset: index,
+      newSongs.forEach((song, index) => {
+        player.add({
+          ...song,
+          addedInChannelId: interaction.channel!.id,
+          requestedBy: interaction.member!.user.id,
+        }, {
+          immediate: addToFrontOfQueue ?? false,
+          immediateOffset: index,
+        });
       });
-    });
-    console.log(`[perf] track-search-and-queue-add: ${Date.now() - searchAndQueueAddPerfStart}ms`);
+    } finally {
+      console.log(`[perf] track-search-and-queue-add: ${Date.now() - searchAndQueueAddPerfStart}ms`);
+    }
 
     const firstSong = newSongs[0];
 
