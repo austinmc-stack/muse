@@ -81,10 +81,18 @@ export default class DjRecommender {
       // (same reason as the cooccurrence query above). Batched into one
       // query for the whole seed instead of one findFirst per coocc row
       // (was up to 20 extra round trips per seed) — `distinct` + `orderBy`
-      // asks Postgres to return exactly one (the most recent) row per
-      // youtubeId directly, same pattern as the sameArtist query below, so
-      // a track replayed hundreds of times in a long-lived guild doesn't
-      // transfer every historical row just to keep the latest one.
+      // guarantees correct most-recent-per-youtubeId results, same pattern
+      // as the sameArtist query below. Confirmed empirically (DEBUG=
+      // prisma:query against this exact @prisma/client 4.16.0) that this
+      // is NOT server-side `DISTINCT ON` pushdown: the generated SQL is a
+      // plain `ORDER BY "playedAt" DESC` with no DISTINCT clause at all —
+      // the query engine fetches every matching row and dedups itself
+      // after the fact. Still one round trip instead of N (strictly better
+      // than the old N+1), but a track replayed hundreds of times in a
+      // long-lived guild does still transfer every historical row over the
+      // wire, it just doesn't get returned to JS. A real fix is either a
+      // $queryRaw with `DISTINCT ON`, or upgrading @prisma/client to 5.21.1
+      // to match the already-pinned `prisma` CLI — follow-up, not done here.
       const metaRows = coocc.length > 0 ? await prisma.playHistory.findMany({
         where: {guildId, youtubeId: {in: coocc.map(row => row.youtubeIdB)}},
         distinct: ['youtubeId'],
