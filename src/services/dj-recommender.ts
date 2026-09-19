@@ -76,20 +76,32 @@ export default class DjRecommender {
         take: 20,
       });
 
-      await Promise.all(coocc.map(async row => {
-        // We need title/artist for the candidate — pull from the most
-        // recent play_history row that references this youtubeId, scoped
-        // to this guild (same reason as the cooccurrence query above).
-        const meta = await prisma.playHistory.findFirst({
-          where: {guildId, youtubeId: row.youtubeIdB},
-          orderBy: {playedAt: 'desc'},
-        });
+      // We need title/artist for each candidate — pull from the most recent
+      // play_history row that references its youtubeId, scoped to this guild
+      // (same reason as the cooccurrence query above). Batched into one
+      // query for the whole seed instead of one findFirst per coocc row
+      // (was up to 20 extra round trips per seed) — order by playedAt desc
+      // and keep the first (most recent) row per youtubeId, matching the
+      // old per-row findFirst's ordering exactly.
+      const metaRows = coocc.length > 0 ? await prisma.playHistory.findMany({
+        where: {guildId, youtubeId: {in: coocc.map(row => row.youtubeIdB)}},
+        orderBy: {playedAt: 'desc'},
+      }) : [];
+      const metaByYoutubeId = new Map<string, typeof metaRows[number]>();
+      for (const row of metaRows) {
+        if (!metaByYoutubeId.has(row.youtubeId)) {
+          metaByYoutubeId.set(row.youtubeId, row);
+        }
+      }
+
+      for (const row of coocc) {
+        const meta = metaByYoutubeId.get(row.youtubeIdB);
         if (!meta) {
-          return;
+          continue;
         }
 
         addOrBoost(candidates, meta, row.score * WEIGHTS.cooccurrence * recencyWeight);
-      }));
+      }
 
       // Metadata signal: same artist played before in this guild, excluding already-played.
       const sameArtist = await prisma.playHistory.findMany({

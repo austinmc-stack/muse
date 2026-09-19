@@ -78,21 +78,23 @@ describe('DjRecommender guild isolation', () => {
       .mockResolvedValueOnce([
         {artist: 'Artist A', guildId: 'guild-1', playedAt: new Date(), youtubeId: 'seed-1'},
       ])
+      .mockResolvedValueOnce([
+        {artist: 'Artist B', guildId: 'guild-1', title: 'Candidate', youtubeId: 'candidate-1', playedAt: new Date()},
+      ])
       .mockResolvedValueOnce([]);
     prismaMock.trackCooccurrence.findMany.mockResolvedValue([
       {guildId: 'guild-1', sampleSize: 3, score: 3, youtubeIdA: 'seed-1', youtubeIdB: 'candidate-1'},
     ]);
-    prismaMock.playHistory.findFirst.mockResolvedValue({
-      artist: 'Artist B', guildId: 'guild-1', title: 'Candidate', youtubeId: 'candidate-1',
-    });
 
     try {
       const recommender = await loadDjRecommender(prismaMock);
       await recommender.recommendNext('guild-1', 1);
 
-      expect(prismaMock.playHistory.findFirst).toHaveBeenCalledWith(
+      // Batched metadata lookup (findMany with youtubeId: {in: [...]}) is
+      // the second playHistory.findMany call, before the same-artist query.
+      expect(prismaMock.playHistory.findMany).toHaveBeenNthCalledWith(2,
         expect.objectContaining({
-          where: expect.objectContaining({guildId: 'guild-1', youtubeId: 'candidate-1'}),
+          where: expect.objectContaining({guildId: 'guild-1', youtubeId: {in: ['candidate-1']}}),
         }),
       );
     } finally {
