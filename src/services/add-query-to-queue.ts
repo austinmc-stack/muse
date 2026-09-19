@@ -233,41 +233,30 @@ export default class AddQueryToQueue {
       await interaction.deferReply({ephemeral: queueAddResponseEphemeral});
     }
 
-    // Ponytail: Phase 4 profiling instrumentation, temporary -- see
-    // .superpowers/sdd/phase-4-8-handoff-plan/task-1-brief.md. Spans search
-    // (getSongs, the network/yt-dlp-bound part) through queue-add (in-memory,
-    // expected cheap) as one path, matching how the brief names it.
-    const searchAndQueueAddPerfStart = Date.now();
-    let newSongs: SongMetadata[];
-    let extraMsg: string;
-    try {
-      [newSongs, extraMsg] = await this.getSongs.getSongs(query, playlistLimit, shouldSplitChapters);
+    let [newSongs, extraMsg] = await this.getSongs.getSongs(query, playlistLimit, shouldSplitChapters);
 
-      if (newSongs.length === 0) {
-        throw new Error('no songs found');
-      }
-
-      if (shuffleAdditions) {
-        newSongs = shuffle(newSongs);
-      }
-
-      if (this.config.ENABLE_SPONSORBLOCK) {
-        newSongs = await Promise.all(newSongs.map(this.skipNonMusicSegments.bind(this)));
-      }
-
-      newSongs.forEach((song, index) => {
-        player.add({
-          ...song,
-          addedInChannelId: interaction.channel!.id,
-          requestedBy: interaction.member!.user.id,
-        }, {
-          immediate: addToFrontOfQueue ?? false,
-          immediateOffset: index,
-        });
-      });
-    } finally {
-      console.log(`[perf] track-search-and-queue-add: ${Date.now() - searchAndQueueAddPerfStart}ms`);
+    if (newSongs.length === 0) {
+      throw new Error('no songs found');
     }
+
+    if (shuffleAdditions) {
+      newSongs = shuffle(newSongs);
+    }
+
+    if (this.config.ENABLE_SPONSORBLOCK) {
+      newSongs = await Promise.all(newSongs.map(this.skipNonMusicSegments.bind(this)));
+    }
+
+    newSongs.forEach((song, index) => {
+      player.add({
+        ...song,
+        addedInChannelId: interaction.channel!.id,
+        requestedBy: interaction.member!.user.id,
+      }, {
+        immediate: addToFrontOfQueue ?? false,
+        immediateOffset: index,
+      });
+    });
 
     const firstSong = newSongs[0];
 

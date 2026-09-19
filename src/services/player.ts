@@ -35,7 +35,7 @@ import {getGuildSettings} from '../utils/get-guild-settings.js';
 import {buildPlayingMessageEmbed, buildDjAddedSongsEmbed, buildDjOutOfRecommendationsEmbed} from '../utils/build-embed.js';
 import {getSoundCloudMediaSource, getYouTubeMediaSource, YtDlpMediaUnavailableError} from '../utils/yt-dlp.js';
 import {Setting} from '@prisma/client';
-import DjRecommender, {type RecommendedTrack} from './dj-recommender.js';
+import DjRecommender from './dj-recommender.js';
 import {getDjSettings} from '../utils/get-dj-settings.js';
 import WrappedTracker from './wrapped-tracker.js';
 import MessageCleanup from './message-cleanup.js';
@@ -702,9 +702,6 @@ export default class {
         to = currentSong.length + currentSong.offset;
       }
 
-      // Ponytail: Phase 4 profiling instrumentation, temporary -- see
-      // .superpowers/sdd/phase-4-8-handoff-plan/task-1-brief.md.
-      const playbackPerfStart = Date.now();
       const stream = await this.getStream(currentSong, {seek: positionSeconds, to});
       if (!this.playbackAttempts.owns(playback)) {
         this.destroyStaleStream(stream);
@@ -719,7 +716,6 @@ export default class {
       });
       voiceConnection.subscribe(this.audioPlayer);
       this.playAudioPlayerResource(this.createAudioStream(stream));
-      console.log(`[perf] audio-player-start: ${Date.now() - playbackPerfStart}ms`);
 
       this.attachListeners();
 
@@ -1377,16 +1373,7 @@ export default class {
         ...this.getQueue().map(song => song.url),
       ];
 
-      // Ponytail: Phase 4 profiling instrumentation, temporary -- see
-      // .superpowers/sdd/phase-4-8-handoff-plan/task-1-brief.md. Remove
-      // once the listening-session report (Phase 4b) is done.
-      const djPerfStart = Date.now();
-      let picks: RecommendedTrack[];
-      try {
-        picks = await djRecommender.recommendNext(this.guildId, settings.minQueueSize, avoidYoutubeIds);
-      } finally {
-        console.log(`[perf] dj-candidate-selection: ${Date.now() - djPerfStart}ms`);
-      }
+      const picks = await djRecommender.recommendNext(this.guildId, settings.minQueueSize, avoidYoutubeIds);
 
       for (const pick of picks) {
         this.add({
