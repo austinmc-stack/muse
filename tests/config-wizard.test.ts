@@ -26,14 +26,20 @@ vi.mock('../src/utils/db.js', () => ({
 }));
 
 import Config, {
+  buildAmbienceScreen,
   buildCleanupScreen,
   buildDjScreen,
+  buildPlaybackScreen,
   buildStatsScreen,
   buildTopScreen,
+  buildViewAllScreen,
+  buildVoiceScreen,
   categoryForCustomId,
   formatCleanupMode,
   formatDjChannel,
+  formatWaitAfterEmpty,
   formatYesNo,
+  validateWebhookUrl,
 } from '../src/commands/config.js';
 
 const baseSetting = {
@@ -45,6 +51,15 @@ const baseSetting = {
   statsDigestDmOwner: false,
   statsWebhookUrl: null as string | null,
   djChannelId: null as string | null,
+  playlistLimit: 50,
+  secondsToWaitAfterQueueEmpties: 30,
+  leaveIfNoListeners: true,
+  queueAddResponseEphemeral: false,
+  defaultVolume: 100,
+  defaultQueuePageSize: 10,
+  turnDownVolumeWhenPeopleSpeak: false,
+  turnDownVolumeWhenPeopleSpeakTarget: 20,
+  autoAnnounceNextSong: false,
 };
 
 const baseDj = {enabled: false, minQueueSize: 2};
@@ -71,16 +86,47 @@ describe('pure formatting helpers', () => {
     expect(categoryForCustomId('config:dj:channel')).toBe('dj');
     expect(categoryForCustomId('config:dj:clear-channel')).toBe('dj');
     expect(categoryForCustomId('config:stats:enabled')).toBe('stats');
+    expect(categoryForCustomId('config:playback:default-volume')).toBe('playback');
+    expect(categoryForCustomId('config:voice:leave-if-no-listeners')).toBe('voice');
+    expect(categoryForCustomId('config:ambience:duck-enabled')).toBe('ambience');
+  });
+
+  it('formats the never-leave case for wait-after-queue-empties', () => {
+    expect(formatWaitAfterEmpty(0)).toBe('never (stays until manually stopped)');
+    expect(formatWaitAfterEmpty(30)).toBe('30s');
+  });
+});
+
+describe('validateWebhookUrl', () => {
+  it('treats a blank field as "clear the webhook", not an error', () => {
+    expect(validateWebhookUrl('')).toEqual({ok: true, url: null});
+    expect(validateWebhookUrl('   ')).toEqual({ok: true, url: null});
+  });
+
+  it('accepts a well-formed http(s) URL, trimmed', () => {
+    expect(validateWebhookUrl('  https://example.com/hook  ')).toEqual({ok: true, url: 'https://example.com/hook'});
+    expect(validateWebhookUrl('http://example.com/hook')).toEqual({ok: true, url: 'http://example.com/hook'});
+  });
+
+  it('rejects garbage input instead of silently saving it', () => {
+    const result = validateWebhookUrl('not a url');
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects non-http(s) protocols', () => {
+    const result = validateWebhookUrl('ftp://example.com/hook');
+    expect(result.ok).toBe(false);
   });
 });
 
 describe('screen builders', () => {
-  it('shows exactly the 3 categories on the top screen (Hick\'s law: few top-level choices)', () => {
+  it('shows all 7 categories on the top screen -- at Miller\'s law\'s upper bound, in one select row', () => {
     const {embeds, components} = buildTopScreen();
     const json = components[0].toJSON() as {components: Array<{options: Array<{value: string}>}>};
     const values = json.components[0].options.map(o => o.value);
 
-    expect(values).toEqual(['cleanup', 'dj', 'stats']);
+    expect(values).toEqual(['playback', 'voice', 'ambience', 'cleanup', 'dj', 'stats', 'view-all']);
+    expect(components).toHaveLength(1); // Still one row: a select can hold many options without adding rows
     expect(embeds[0].toJSON().title).toContain('Muse Settings');
   });
 
@@ -100,13 +146,60 @@ describe('screen builders', () => {
     expect(description).toContain('**Auto-delete delay:** 45s');
   });
 
-  it('keeps each screen to 4 action rows or fewer (Miller\'s law: a handful of choices per screen)', () => {
+  it('keeps every screen to 5 action rows or fewer -- Discord\'s hard per-message cap', () => {
     for (const screen of [
       buildCleanupScreen(baseSetting),
       buildDjScreen(baseSetting, baseDj),
       buildStatsScreen(baseSetting),
+      buildPlaybackScreen(baseSetting),
+      buildVoiceScreen(baseSetting),
+      buildAmbienceScreen(baseSetting),
+      buildAmbienceScreen({...baseSetting, turnDownVolumeWhenPeopleSpeak: true}),
+      buildViewAllScreen(baseSetting, baseDj),
     ]) {
       expect(screen.components.length).toBeLessThanOrEqual(5);
+    }
+  });
+
+  it('shows every setting the old /config set-* subcommands covered, now via the wizard', () => {
+    const playback = buildPlaybackScreen({...baseSetting, defaultVolume: 75, defaultQueuePageSize: 15, playlistLimit: 25, queueAddResponseEphemeral: true});
+    const description = playback.embeds[0].toJSON().description!;
+    expect(description).toContain('**Default volume:** 75%');
+    expect(description).toContain('**Queue page size:** 15');
+    expect(description).toContain('**Playlist add limit:** 25 tracks');
+    expect(description).toContain('Private (only you see them)');
+  });
+
+  it('renders the voice-presence screen with the never-leave wording', () => {
+    const screen = buildVoiceScreen({...baseSetting, secondsToWaitAfterQueueEmpties: 0});
+    expect(screen.embeds[0].toJSON().description).toContain('never (stays until manually stopped)');
+  });
+
+  it('only shows the duck-target select once ducking is turned on', () => {
+    const off = buildAmbienceScreen(baseSetting);
+    const on = buildAmbienceScreen({...baseSetting, turnDownVolumeWhenPeopleSpeak: true, turnDownVolumeWhenPeopleSpeakTarget: 30});
+
+    expect(off.components).toHaveLength(2); // Enabled select + back
+    expect(on.components).toHaveLength(3); // Enabled select + target select + back
+    expect(on.embeds[0].toJSON().description).toContain('**Target volume while speaking:** 30%');
+  });
+
+  it('the view-all screen is read-only (no field controls, just a back button) and lists every setting', () => {
+    const screen = buildViewAllScreen(baseSetting, baseDj);
+    expect(screen.components).toHaveLength(1);
+
+    const description = screen.embeds[0].toJSON().description!;
+    for (const fragment of [
+      '**Playlist add limit:** 50 tracks',
+      '**Default volume:** 100%',
+      '**Queue page size:** 10',
+      '**Leave when no listeners:** On',
+      '**Auto-announce next song:** Off',
+      '**Turn down volume when people speak:** Off',
+      '**Target volume while speaking:** 20%',
+      '**Stats webhook:** not set',
+    ]) {
+      expect(description).toContain(fragment);
     }
   });
 
@@ -258,5 +351,126 @@ describe('execute() end-to-end wizard flow', () => {
     const {editReply} = await runWizard([]);
 
     expect(editReply).toHaveBeenCalledWith({components: []});
+  });
+
+  it('sets a Playback field (playlistLimit), covering a setting the old subcommands exposed but the merge dropped', async () => {
+    const category = makeComponent('config:category', ['playback']);
+    const setLimit = makeComponent('config:playback:playlist-limit', ['100']);
+
+    await runWizard([category, setLimit]);
+
+    expect(mocks.settingUpdate).toHaveBeenCalledWith({where: {guildId: GUILD_ID}, data: {playlistLimit: 100}});
+  });
+
+  it('sets a Voice Presence field (secondsToWaitAfterQueueEmpties)', async () => {
+    const category = makeComponent('config:category', ['voice']);
+    const setWait = makeComponent('config:voice:wait-after-empty', ['0']);
+
+    await runWizard([category, setWait]);
+
+    expect(mocks.settingUpdate).toHaveBeenCalledWith({where: {guildId: GUILD_ID}, data: {secondsToWaitAfterQueueEmpties: 0}});
+  });
+
+  it('turning on Ambience ducking reveals the target select on the next render', async () => {
+    const category = makeComponent('config:category', ['ambience']);
+    const enableDuck = makeComponent('config:ambience:duck-enabled', ['true']);
+
+    await runWizard([category, enableDuck]);
+
+    expect(mocks.settingUpdate).toHaveBeenCalledWith({where: {guildId: GUILD_ID}, data: {turnDownVolumeWhenPeopleSpeak: true}});
+    const rendered = enableDuck.update.mock.calls[0][0] as {components: unknown[]};
+    expect(rendered.components).toHaveLength(3); // Enabled select + newly-revealed target select + back
+  });
+
+  it('reaches "View All" straight from the top-level select and shows it\'s read-only', async () => {
+    const category = makeComponent('config:category', ['view-all']);
+    const backToTop = makeComponent('config:back');
+
+    const {message} = await runWizard([category, backToTop]);
+
+    const rendered = category.update.mock.calls[0][0] as {embeds: Array<{toJSON: () => {title?: string; description?: string}}>; components: unknown[]};
+    expect(rendered.embeds[0].toJSON().title).toContain('All Settings');
+    expect(rendered.embeds[0].toJSON().description).toContain('**Playlist add limit:** 50 tracks');
+    expect(rendered.components).toHaveLength(1); // Just the back button, no writable controls
+    expect(message.awaitMessageComponent).toHaveBeenCalledTimes(3);
+  });
+
+  describe('stats webhook modal round-trip', () => {
+    const makeWebhookButton = (currentUrl: string | null) => ({
+      customId: 'config:stats:webhook-edit',
+      user: {id: USER_ID},
+      isStringSelectMenu: () => false,
+      isChannelSelectMenu: () => false,
+      isButton: () => true,
+      showModal: vi.fn().mockResolvedValue(undefined),
+      awaitModalSubmit: vi.fn(),
+      update: vi.fn().mockResolvedValue(undefined),
+      _currentUrl: currentUrl,
+    });
+
+    const makeModalSubmit = (submittedValue: string) => ({
+      user: {id: USER_ID},
+      fields: {getTextInputValue: vi.fn().mockReturnValue(submittedValue)},
+      isFromMessage: () => true,
+      update: vi.fn().mockResolvedValue(undefined),
+    });
+
+    it('opens the modal pre-filled with the current webhook, then saves a valid submitted URL', async () => {
+      const category = makeComponent('config:category', ['stats']);
+      const webhookButton = makeWebhookButton(null);
+      const modalSubmit = makeModalSubmit('https://example.com/hook');
+      webhookButton.awaitModalSubmit.mockResolvedValue(modalSubmit);
+
+      await runWizard([category, webhookButton as any]);
+
+      expect(webhookButton.showModal).toHaveBeenCalledTimes(1);
+      expect(mocks.settingUpdate).toHaveBeenCalledWith({where: {guildId: GUILD_ID}, data: {statsWebhookUrl: 'https://example.com/hook'}});
+
+      // The button itself must never be .update()'d -- showModal() was its ack.
+      expect(webhookButton.update).not.toHaveBeenCalled();
+      const rendered = modalSubmit.update.mock.calls[0][0] as {embeds: Array<{toJSON: () => {description?: string}}>};
+      expect(rendered.embeds[0].toJSON().description).toContain('Stats webhook is now set.');
+    });
+
+    it('clears the webhook when the modal is submitted blank', async () => {
+      const category = makeComponent('config:category', ['stats']);
+      const webhookButton = makeWebhookButton('https://old.example.com/hook');
+      const modalSubmit = makeModalSubmit('   ');
+      webhookButton.awaitModalSubmit.mockResolvedValue(modalSubmit);
+      liveSetting.statsWebhookUrl = 'https://old.example.com/hook';
+
+      await runWizard([category, webhookButton as any]);
+
+      expect(mocks.settingUpdate).toHaveBeenCalledWith({where: {guildId: GUILD_ID}, data: {statsWebhookUrl: null}});
+      const rendered = modalSubmit.update.mock.calls[0][0] as {embeds: Array<{toJSON: () => {description?: string}}>};
+      expect(rendered.embeds[0].toJSON().description).toContain('Stats webhook cleared.');
+    });
+
+    it('rejects an invalid submitted URL without touching the saved value', async () => {
+      const category = makeComponent('config:category', ['stats']);
+      const webhookButton = makeWebhookButton(null);
+      const modalSubmit = makeModalSubmit('not a url');
+      webhookButton.awaitModalSubmit.mockResolvedValue(modalSubmit);
+
+      await runWizard([category, webhookButton as any]);
+
+      expect(mocks.settingUpdate).not.toHaveBeenCalledWith(expect.objectContaining({data: expect.objectContaining({statsWebhookUrl: expect.anything()})}));
+      const rendered = modalSubmit.update.mock.calls[0][0] as {embeds: Array<{toJSON: () => {description?: string}}>};
+      expect(rendered.embeds[0].toJSON().description).toContain('Webhook left unchanged.');
+    });
+
+    it('leaves the message untouched if the modal is dismissed/times out', async () => {
+      const category = makeComponent('config:category', ['stats']);
+      const webhookButton = makeWebhookButton(null);
+      webhookButton.awaitModalSubmit.mockRejectedValue(new Error('modal timed out'));
+      const backToTop = makeComponent('config:back');
+
+      const {message} = await runWizard([category, webhookButton as any, backToTop]);
+
+      expect(mocks.settingUpdate).not.toHaveBeenCalled();
+      expect(webhookButton.update).not.toHaveBeenCalled();
+      // Loop kept waiting on the same message and picked up the next interaction.
+      expect(message.awaitMessageComponent).toHaveBeenCalledTimes(4);
+    });
   });
 });
