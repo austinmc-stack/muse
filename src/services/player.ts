@@ -284,7 +284,12 @@ export default class {
       // top it up right now (same shared maybeAutoQueue() that
       // onAudioPlayerIdle calls on natural end-of-track), instead of only
       // relying on the idle path or letting finishQueue()'s leave timer fire.
-      await this.maybeAutoQueue();
+      // A DJ-side failure here (bad settings, no permission to notify the DJ
+      // channel, etc) must not fail the skip itself -- swallow and log, same
+      // as onAudioPlayerIdle does for the natural end-of-track path.
+      await this.maybeAutoQueue().catch(error => {
+        debug(`DJ auto-queue on skip failed for guild ${this.guildId}:`, error);
+      });
     }
 
     const destinationSong = this.getCurrent();
@@ -1406,7 +1411,7 @@ export default class {
       debug(`DJ auto-queue skipped for guild ${this.guildId}:`, error);
 
       if (this.currentChannel) {
-        await this.sendCleanupCandidate({embeds: [buildDjOutOfRecommendationsEmbed()]}, 'dj');
+        await this.sendCleanupCandidate({embeds: [buildDjOutOfRecommendationsEmbed()]}, 'dj').catch(() => undefined);
       }
     }
   }
