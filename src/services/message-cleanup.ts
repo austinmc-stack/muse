@@ -8,7 +8,7 @@
 // rather than causing any error). Upgrade to a DB-backed TrackedMessage
 // table if that cosmetic gap ever actually matters.
 
-import {GuildTextBasedChannel, Message, VoiceChannel} from 'discord.js';
+import {GuildTextBasedChannel, Message} from 'discord.js';
 import {injectable} from 'inversify';
 import {getGuildSettings} from '../utils/get-guild-settings.js';
 
@@ -90,13 +90,29 @@ export default class MessageCleanup {
     const fresh = toDelete.filter(t => Date.now() - t.message.createdTimestamp < FOURTEEN_DAYS_MS);
     const stale = toDelete.filter(t => Date.now() - t.message.createdTimestamp >= FOURTEEN_DAYS_MS);
 
+    // DJ-category messages can land in a configured djChannelId while
+    // control-category messages stay in the channel the command was typed
+    // in, so `fresh` can span multiple channels. bulkDelete() rejects the
+    // whole batch if any id belongs to a different channel, so group by
+    // channel first and bulk-delete each group separately.
+    const freshByChannel = new Map<string, TrackedMessage[]>();
+    for (const tracked of fresh) {
+      const {channelId} = tracked.message;
+      const group = freshByChannel.get(channelId) ?? [];
+      group.push(tracked);
+      freshByChannel.set(channelId, group);
+    }
+
     // Discord's bulk-delete endpoint requires 2-100 messages; fall back to
     // an individual delete for a lone message (or anything past the 14-day window).
-    if (fresh.length >= 2) {
-      const channel = fresh[0].message.channel as VoiceChannel;
-      await channel.bulkDelete(fresh.map(t => t.message.id)).catch(() => undefined);
-    } else {
-      stale.push(...fresh);
+    for (const group of freshByChannel.values()) {
+      if (group.length >= 2) {
+        const channel = group[0].message.channel as GuildTextBasedChannel;
+        // eslint-disable-next-line no-await-in-loop
+        await channel.bulkDelete(group.map(t => t.message.id)).catch(() => undefined);
+      } else {
+        stale.push(...group);
+      }
     }
 
     await Promise.all(stale.map(async t => t.message.delete().catch(() => undefined)));
