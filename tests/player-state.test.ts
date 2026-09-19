@@ -578,6 +578,26 @@ describe('Player DJ auto-queue exhaustion notice', () => {
     expect(send).toHaveBeenCalledWith({embeds: [{title: 'dj-added'}]});
     expect(player.getCurrent()?.title).toBe('Track A');
   });
+
+  it('does not send the misleading "out of recommendations" fallback when tracks were queued but the success message itself fails to send', async () => {
+    const djRecommender = {
+      recommendNext: vi.fn().mockResolvedValue([
+        {artist: 'Artist A', title: 'Track A', youtubeId: 'track-a'},
+      ]),
+    };
+    const player = new Player({} as never, GUILD_ID, undefined, djRecommender as never);
+    const send = vi.fn().mockRejectedValue(new Error('network blip'));
+    Object.assign(player, {currentChannel: {send}});
+
+    await getPrivateState(player).maybeAutoQueue();
+
+    // Only the success-path send was attempted, not the "out of recs" fallback.
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith({embeds: [{title: 'dj-added'}]});
+    expect(send).not.toHaveBeenCalledWith({embeds: [{title: 'dj-out-of-recs'}]});
+    // Tracks were still queued despite the notification failure.
+    expect(player.getCurrent()?.title).toBe('Track A');
+  });
 });
 
 describe('Player DJ channel resolution (djChannelId)', () => {

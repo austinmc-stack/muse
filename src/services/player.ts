@@ -1366,6 +1366,14 @@ export default class {
       return;
     }
 
+    // Only the "find + queue recommendations" step belongs in this try --
+    // its catch assumes any error means "no recommendations found" and
+    // sends that fallback message. The success-path send below runs AFTER
+    // tracks are already queued, so if it fails that's an unrelated
+    // delivery problem, not a "no recommendations" situation; sending the
+    // fallback message in that case would be misleading (and would likely
+    // fail identically, since it targets the same channel).
+    let picks: Awaited<ReturnType<DjRecommender['recommendNext']>> = [];
     try {
       const current = this.getCurrent();
       const avoidYoutubeIds = [
@@ -1373,7 +1381,7 @@ export default class {
         ...this.getQueue().map(song => song.url),
       ];
 
-      const picks = await djRecommender.recommendNext(this.guildId, settings.minQueueSize, avoidYoutubeIds);
+      picks = await djRecommender.recommendNext(this.guildId, settings.minQueueSize, avoidYoutubeIds);
 
       for (const pick of picks) {
         this.add({
@@ -1390,16 +1398,20 @@ export default class {
           requestedBy: 'dj',
         });
       }
-
-      if (picks.length > 0 && this.currentChannel) {
-        await this.sendCleanupCandidate({embeds: [buildDjAddedSongsEmbed(picks)]}, 'dj');
-      }
     } catch (error) {
       debug(`DJ auto-queue skipped for guild ${this.guildId}:`, error);
 
       if (this.currentChannel) {
         await this.sendCleanupCandidate({embeds: [buildDjOutOfRecommendationsEmbed()]}, 'dj').catch(() => undefined);
       }
+
+      return;
+    }
+
+    if (picks.length > 0 && this.currentChannel) {
+      await this.sendCleanupCandidate({embeds: [buildDjAddedSongsEmbed(picks)]}, 'dj').catch(error => {
+        debug(`DJ auto-queue: failed to send added-songs message for guild ${this.guildId}:`, error);
+      });
     }
   }
 
