@@ -39,6 +39,7 @@ import Config, {
   formatDjChannel,
   formatWaitAfterEmpty,
   formatYesNo,
+  MODAL_TIMEOUT_MS,
   validateWebhookUrl,
 } from '../src/commands/config.js';
 
@@ -201,6 +202,14 @@ describe('screen builders', () => {
     ]) {
       expect(description).toContain(fragment);
     }
+  });
+
+  it('masks the stats webhook URL in the view-all screen instead of printing it in full', () => {
+    const screen = buildViewAllScreen({...baseSetting, statsWebhookUrl: 'https://discord.com/api/webhooks/123456/secret-token-abcdef'}, baseDj);
+    const description = screen.embeds[0].toJSON().description!;
+    expect(description).not.toContain('secret-token-abcdef');
+    expect(description).toContain('discord.com');
+    expect(description).toContain('cdef'); // Last 4 chars, for recognizability
   });
 
   it('echoes the DJ channel as a mention once set, matching the brief\'s example wording', () => {
@@ -424,6 +433,11 @@ describe('execute() end-to-end wizard flow', () => {
       await runWizard([category, webhookButton as any]);
 
       expect(webhookButton.showModal).toHaveBeenCalledTimes(1);
+      // Modal wait must be much shorter than the 5-minute wizard session
+      // timeout -- otherwise a dismissed modal leaves the wizard message
+      // stale/unclickable for up to 5 minutes (see git history).
+      expect(webhookButton.awaitModalSubmit).toHaveBeenCalledWith(expect.objectContaining({time: MODAL_TIMEOUT_MS}));
+      expect(MODAL_TIMEOUT_MS).toBeLessThanOrEqual(60_000);
       expect(mocks.settingUpdate).toHaveBeenCalledWith({where: {guildId: GUILD_ID}, data: {statsWebhookUrl: 'https://example.com/hook'}});
 
       // The button itself must never be .update()'d -- showModal() was its ack.

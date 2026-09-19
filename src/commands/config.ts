@@ -27,9 +27,15 @@ import {getDjSettings, updateDjSettings} from '../utils/get-dj-settings.js';
 
 // A guild owner who walks away from the menu shouldn't leave it clickable
 // forever -- 5 minutes of inactivity closes it (matches history.ts's shorter
-// 30s single-shot timeout, scaled up since this is a multi-step wizard). The
-// webhook modal reuses the same budget for how long we'll wait on a submit.
+// 30s single-shot timeout, scaled up since this is a multi-step wizard).
 const SESSION_TIMEOUT_MS = 5 * 60_000;
+// The webhook modal gets its own much shorter budget: while awaitModalSubmit
+// is pending, the outer loop's component collector isn't attached, so a
+// dismissed modal (e.g. Escape) leaves the wizard message stale and every
+// click on it fails until this await resolves. Discord fires no event on
+// dismissal, so we can't recover early -- keeping this short instead of
+// reusing SESSION_TIMEOUT_MS bounds that dead window to under a minute.
+export const MODAL_TIMEOUT_MS = 45_000;
 
 type CategoryId = 'cleanup' | 'dj' | 'stats' | 'playback' | 'voice' | 'ambience' | 'view-all';
 
@@ -89,6 +95,24 @@ export const formatDjChannel = (channelId: string | null): string =>
 // same as the old set-wait-after-queue-empties subcommand's description.
 export const formatWaitAfterEmpty = (seconds: number): string =>
   (seconds === 0 ? 'never (stays until manually stopped)' : `${seconds}s`);
+
+// A webhook URL is credential-equivalent -- anyone holding it can post as
+// the bot. buildStatsScreen already keeps it to "set"/"not set"; this view
+// is meant to show a bit more (so an admin can recognize which webhook is
+// configured) without leaking a screenshot-usable credential, so show the
+// host plus a few trailing characters instead of the full URL.
+export const formatWebhookUrl = (url: string | null): string => {
+  if (!url) {
+    return 'not set';
+  }
+
+  try {
+    const {host} = new URL(url);
+    return `${host}/…${url.slice(-4)}`;
+  } catch {
+    return 'set (unparseable URL)';
+  }
+};
 
 // The old /config set-stats-webhook subcommand did NOT actually validate the
 // string was a URL -- see git show 9762b2f -- it only trimmed it and treated
@@ -406,7 +430,7 @@ export function buildViewAllScreen(setting: ViewAllSetting, dj: Pick<DjSetting, 
     ['Stats digest', formatYesNo(setting.statsDigestEnabled)],
     ['Stats digest cadence', `${setting.statsDigestCadenceDays} day(s)`],
     ['Stats digest DMs owner', formatYesNo(setting.statsDigestDmOwner)],
-    ['Stats webhook', setting.statsWebhookUrl ?? 'not set'],
+    ['Stats webhook', formatWebhookUrl(setting.statsWebhookUrl)],
     ['Default volume', `${setting.defaultVolume}%`],
     ['Queue page size', String(setting.defaultQueuePageSize)],
     ['Playlist add limit', `${setting.playlistLimit} tracks`],
@@ -571,7 +595,7 @@ export default class implements Command {
     try {
       modalSubmit = await component.awaitModalSubmit({
         filter: i => i.user.id === component.user.id,
-        time: SESSION_TIMEOUT_MS,
+        time: MODAL_TIMEOUT_MS,
       });
     } catch {
       // Dismissed or timed out -- showModal() already acked the button
