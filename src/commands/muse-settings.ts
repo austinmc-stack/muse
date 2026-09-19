@@ -169,7 +169,7 @@ export function buildDjScreen(setting: Pick<Setting, 'djChannelId'>, dj: Pick<Dj
   const headline = [
     `**Auto-DJ:** ${formatYesNo(dj.enabled)}`,
     `**Message channel:** ${formatDjChannel(setting.djChannelId)}`,
-    `**Min queue size before auto-fill:** ${dj.minQueueSize}`,
+    `**Keep this many songs queued:** ${dj.minQueueSize}`,
   ].join('\n');
 
   const embed = new EmbedBuilder()
@@ -188,7 +188,7 @@ export function buildDjScreen(setting: Pick<Setting, 'djChannelId'>, dj: Pick<Dj
     channelSelect.setDefaultChannels(setting.djChannelId);
   }
 
-  const minQueueSelect = presetIntSelect({customId: IDS.djMinQueueSize, presets: DJ_MIN_QUEUE_PRESETS, current: dj.minQueueSize, unit: '', label: 'Min queue size before auto-fill'});
+  const minQueueSelect = presetIntSelect({customId: IDS.djMinQueueSize, presets: DJ_MIN_QUEUE_PRESETS, current: dj.minQueueSize, unit: '', label: 'Keep this many songs queued'});
 
   const actionsRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(IDS.djClearChannel).setLabel('Follow active voice channel').setStyle(ButtonStyle.Secondary),
@@ -270,29 +270,34 @@ export default class implements Command {
 
     // This is an interactive wizard: each iteration must wait for the
     // previous step's click before it knows what to render next, so the
-    // awaits below can't be parallelized.
-    for (;;) {
-      let component: MessageComponentInteraction;
-      try {
-        // Omitting componentType collects both buttons and select menus on
-        // this message; the return type can't be inferred without it, hence
-        // the cast (same class of discord.js@14.11 typing friction as above).
+    // awaits below can't be parallelized. Wrapped in try/finally so a
+    // mid-wizard throw (e.g. a transient DB error in handleComponent)
+    // still clears the components instead of leaving a zombie ephemeral
+    // message with live-looking but dead controls.
+    try {
+      for (;;) {
+        let component: MessageComponentInteraction;
+        try {
+          // Omitting componentType collects both buttons and select menus on
+          // this message; the return type can't be inferred without it, hence
+          // the cast (same class of discord.js@14.11 typing friction as above).
+          // eslint-disable-next-line no-await-in-loop
+          component = await message.awaitMessageComponent({
+            filter: i => i.user.id === interaction.user.id,
+            time: SESSION_TIMEOUT_MS,
+          }) as unknown as MessageComponentInteraction;
+        } catch {
+          break;
+        }
+
         // eslint-disable-next-line no-await-in-loop
-        component = await message.awaitMessageComponent({
-          filter: i => i.user.id === interaction.user.id,
-          time: SESSION_TIMEOUT_MS,
-        }) as unknown as MessageComponentInteraction;
-      } catch {
-        break;
+        const screen = await this.handleComponent(component, guildId);
+        // eslint-disable-next-line no-await-in-loop, @typescript-eslint/no-unsafe-assignment
+        await component.update({embeds: screen.embeds, components: screen.components as any});
       }
-
-      // eslint-disable-next-line no-await-in-loop
-      const screen = await this.handleComponent(component, guildId);
-      // eslint-disable-next-line no-await-in-loop, @typescript-eslint/no-unsafe-assignment
-      await component.update({embeds: screen.embeds, components: screen.components as any});
+    } finally {
+      await interaction.editReply({components: []}).catch(() => undefined);
     }
-
-    await interaction.editReply({components: []}).catch(() => undefined);
   }
 
   private async handleComponent(component: MessageComponentInteraction, guildId: string): Promise<Screen> {
@@ -364,7 +369,7 @@ export default class implements Command {
       case IDS.djMinQueueSize: {
         const size = Number(value);
         await updateDjSettings(guildId, {minQueueSize: size});
-        return `Auto-DJ will fill the queue once it drops below **${size}** song(s).`;
+        return `Auto-DJ will now keep **${size}** song(s) queued, requesting that many new tracks each time it triggers.`;
       }
 
       case IDS.djChannel: {

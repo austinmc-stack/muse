@@ -144,6 +144,13 @@ export default class implements Command {
       .addChannelOption(option => option
         .setName('channel')
         .setDescription('channel DJ messages should be sent to (text or voice channel with text chat)')
+        // Numeric literals (text=0, voice=2), not ChannelType.GuildText/GuildVoice:
+        // @discordjs/builders bundles its own (older) discord-api-types copy, so
+        // its ChannelType enum is a structurally-different type from discord.js's
+        // and fails to typecheck here. These ids are stable Discord API channel
+        // type values, same as ChannelSelectMenuBuilder's setChannelTypes() in
+        // muse-settings.ts restricts to below.
+        .addChannelTypes(0, 2)
         .setRequired(true)))
     .addSubcommand(subcommand => subcommand
       .setName('clear-dj-channel')
