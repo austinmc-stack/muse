@@ -80,19 +80,17 @@ export default class DjRecommender {
       // play_history row that references its youtubeId, scoped to this guild
       // (same reason as the cooccurrence query above). Batched into one
       // query for the whole seed instead of one findFirst per coocc row
-      // (was up to 20 extra round trips per seed) — order by playedAt desc
-      // and keep the first (most recent) row per youtubeId, matching the
-      // old per-row findFirst's ordering exactly.
+      // (was up to 20 extra round trips per seed) — `distinct` + `orderBy`
+      // asks Postgres to return exactly one (the most recent) row per
+      // youtubeId directly, same pattern as the sameArtist query below, so
+      // a track replayed hundreds of times in a long-lived guild doesn't
+      // transfer every historical row just to keep the latest one.
       const metaRows = coocc.length > 0 ? await prisma.playHistory.findMany({
         where: {guildId, youtubeId: {in: coocc.map(row => row.youtubeIdB)}},
+        distinct: ['youtubeId'],
         orderBy: {playedAt: 'desc'},
       }) : [];
-      const metaByYoutubeId = new Map<string, typeof metaRows[number]>();
-      for (const row of metaRows) {
-        if (!metaByYoutubeId.has(row.youtubeId)) {
-          metaByYoutubeId.set(row.youtubeId, row);
-        }
-      }
+      const metaByYoutubeId = new Map(metaRows.map(row => [row.youtubeId, row]));
 
       for (const row of coocc) {
         const meta = metaByYoutubeId.get(row.youtubeIdB);
