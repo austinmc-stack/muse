@@ -50,7 +50,6 @@ vi.mock('../src/utils/get-guild-settings.js', () => ({
   getGuildSettings: mocks.getGuildSettings,
 }));
 
-import Config from '../src/commands/config.js';
 import handleVoiceStateUpdate from '../src/events/voice-state-update.js';
 import Player, {MediaSource, QueuedSong, STATUS} from '../src/services/player.js';
 
@@ -94,20 +93,6 @@ const makeSong = (): QueuedSong => ({
 const getPrivateState = (player: Player) => player as unknown as {
   disconnectTimer: NodeJS.Timeout | null;
   finishQueue(): Promise<void>;
-};
-
-const makeConfigInteraction = (delay: number) => {
-  const reply = vi.fn().mockResolvedValue(undefined);
-  const interaction = {
-    guild: {id: GUILD_ID},
-    options: {
-      getInteger: vi.fn((name: string) => name === 'delay' ? delay : null),
-      getSubcommand: vi.fn(() => 'set-wait-after-queue-empties'),
-    },
-    reply,
-  } as unknown as ChatInputCommandInteraction;
-
-  return {interaction, reply};
 };
 
 const makeMembers = (...bots: boolean[]) => new Collection(
@@ -163,21 +148,6 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
-});
-
-describe('/config set-wait-after-queue-empties', () => {
-  it.each([0, 37])('persists the nonnegative delay %i', async delay => {
-    const {interaction, reply} = makeConfigInteraction(delay);
-
-    await new Config().execute(interaction);
-
-    expect(mocks.getGuildSettings).toHaveBeenCalledWith(GUILD_ID);
-    expect(mocks.settingUpdate).toHaveBeenCalledWith({
-      where: {guildId: GUILD_ID},
-      data: {secondsToWaitAfterQueueEmpties: delay},
-    });
-    expect(reply).toHaveBeenCalledWith('👍 wait delay updated');
-  });
 });
 
 describe('queue exhaustion disconnect delay', () => {

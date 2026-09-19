@@ -1,494 +1,411 @@
 import {SlashCommandBuilder} from '@discordjs/builders';
-import {ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits} from 'discord.js';
+import {
+  ActionRowBuilder,
+  AnyComponentBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChannelSelectMenuBuilder,
+  ChannelType,
+  ChatInputCommandInteraction,
+  Colors,
+  EmbedBuilder,
+  MessageComponentInteraction,
+  PermissionFlagsBits,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+} from 'discord.js';
 import {injectable} from 'inversify';
+import {Setting, DjSetting} from '@prisma/client';
 import {prisma} from '../utils/db.js';
 import Command from './index.js';
 import {getGuildSettings} from '../utils/get-guild-settings.js';
+import {getDjSettings, updateDjSettings} from '../utils/get-dj-settings.js';
+
+// A guild owner who walks away from the menu shouldn't leave it clickable
+// forever -- 5 minutes of inactivity closes it (matches history.ts's shorter
+// 30s single-shot timeout, scaled up since this is a multi-step wizard).
+const SESSION_TIMEOUT_MS = 5 * 60_000;
+
+type CategoryId = 'cleanup' | 'dj' | 'stats';
+
+// All customIds this command's components can produce. Kept as an exact set
+// of literal strings (no per-guild/per-user data embedded) so routing is a
+// plain switch/prefix check -- no central dispatcher needed, same
+// self-contained-collector pattern history.ts already uses.
+const IDS = {
+  category: 'config:category',
+  back: 'config:back',
+  cleanupMode: 'config:cleanup:mode',
+  cleanupDelay: 'config:cleanup:delay',
+  cleanupSessionEnd: 'config:cleanup:session-end',
+  djEnabled: 'config:dj:enabled',
+  djMinQueueSize: 'config:dj:min-queue-size',
+  djChannel: 'config:dj:channel',
+  djClearChannel: 'config:dj:clear-channel',
+  statsEnabled: 'config:stats:enabled',
+  statsCadence: 'config:stats:cadence',
+  statsDmOwner: 'config:stats:dm-owner',
+} as const;
+
+export interface Screen {
+  embeds: EmbedBuilder[];
+  components: ActionRowBuilder[];
+}
+
+// --- plain-language formatting (pure, unit-testable) ---
+
+export const formatYesNo = (value: boolean): string => (value ? 'On' : 'Off');
+
+export const formatCleanupMode = (mode: string): string => {
+  switch (mode) {
+    case 'NONE': return 'None (never clean up)';
+    case 'DJ_ONLY': return 'DJ messages only';
+    case 'ALL_BOT_MESSAGES': return 'All bot messages';
+    default: return mode;
+  }
+};
+
+export const formatDjChannel = (channelId: string | null): string =>
+  (channelId ? `<#${channelId}>` : 'follows the active voice channel');
+
+// --- small component builders shared across categories ---
+
+const backButton = (): ButtonBuilder => new ButtonBuilder()
+  .setCustomId(IDS.back)
+  .setLabel('◀ Categories')
+  .setStyle(ButtonStyle.Secondary);
+
+const yesNoSelect = (customId: string, current: boolean, label: string): StringSelectMenuBuilder =>
+  new StringSelectMenuBuilder()
+    .setCustomId(customId)
+    .setPlaceholder(`${label} (now: ${formatYesNo(current)})`)
+    .addOptions(
+      new StringSelectMenuOptionBuilder().setLabel('On').setValue('true').setDefault(current),
+      new StringSelectMenuOptionBuilder().setLabel('Off').setValue('false').setDefault(!current),
+    );
+
+interface PresetIntSelectOptions {
+  customId: string;
+  presets: number[];
+  current: number;
+  unit: string;
+  label: string;
+}
+
+const presetIntSelect = (options: PresetIntSelectOptions): StringSelectMenuBuilder =>
+  new StringSelectMenuBuilder()
+    .setCustomId(options.customId)
+    .setPlaceholder(`${options.label} (now: ${options.current}${options.unit})`)
+    .addOptions(options.presets.map(value => new StringSelectMenuOptionBuilder()
+      .setLabel(`${value}${options.unit}`)
+      .setValue(String(value))
+      .setDefault(value === options.current)));
+
+const row = (component: AnyComponentBuilder): ActionRowBuilder =>
+  new ActionRowBuilder().addComponents(component);
+
+// --- screens (pure: take already-fetched settings, return embed + components) ---
+
+export function buildTopScreen(): Screen {
+  const embed = new EmbedBuilder()
+    .setTitle('🎛️ Muse Settings')
+    .setDescription('Pick a category to configure. Only you can see this.')
+    .setColor(Colors.Blurple);
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(IDS.category)
+    .setPlaceholder('Choose a category…')
+    .addOptions(
+      new StringSelectMenuOptionBuilder().setLabel('Cleanup').setValue('cleanup').setEmoji('🧹')
+        .setDescription('auto-delete DJ/bot messages'),
+      new StringSelectMenuOptionBuilder().setLabel('DJ').setValue('dj').setEmoji('🎧')
+        .setDescription('auto-queue + DJ message channel'),
+      new StringSelectMenuOptionBuilder().setLabel('Stats Digest').setValue('stats').setEmoji('📊')
+        .setDescription('scheduled listening recap'),
+    );
+
+  return {embeds: [embed], components: [row(menu)]};
+}
+
+const withConfirmation = (headline: string, confirmation?: string): string =>
+  (confirmation ? `✅ ${confirmation}\n\n${headline}` : headline);
+
+const CLEANUP_DELAY_PRESETS = [15, 30, 45, 60, 120, 300];
+
+export function buildCleanupScreen(setting: Pick<Setting, 'cleanupMode' | 'ephemeralDelaySeconds' | 'cleanupOnSessionEnd'>, confirmation?: string): Screen {
+  const headline = [
+    `**Mode:** ${formatCleanupMode(setting.cleanupMode)}`,
+    `**Auto-delete delay:** ${setting.ephemeralDelaySeconds}s`,
+    `**Sweep on session end:** ${formatYesNo(setting.cleanupOnSessionEnd)}`,
+  ].join('\n');
+
+  const embed = new EmbedBuilder()
+    .setTitle('🧹 Cleanup')
+    .setDescription(withConfirmation(headline, confirmation))
+    .setColor(setting.cleanupMode === 'NONE' ? Colors.Grey : Colors.Green)
+    .setFooter({text: 'Controls which bot messages get auto-deleted, and when.'});
+
+  const modeSelect = new StringSelectMenuBuilder()
+    .setCustomId(IDS.cleanupMode)
+    .setPlaceholder('Cleanup mode')
+    .addOptions(
+      new StringSelectMenuOptionBuilder().setLabel('None — never clean up').setValue('NONE').setDefault(setting.cleanupMode === 'NONE'),
+      new StringSelectMenuOptionBuilder().setLabel('DJ only — clean up DJ commentary/announcements').setValue('DJ_ONLY').setDefault(setting.cleanupMode === 'DJ_ONLY'),
+      new StringSelectMenuOptionBuilder().setLabel('All — clean up all bot messages').setValue('ALL_BOT_MESSAGES').setDefault(setting.cleanupMode === 'ALL_BOT_MESSAGES'),
+    );
+
+  const delaySelect = presetIntSelect({customId: IDS.cleanupDelay, presets: CLEANUP_DELAY_PRESETS, current: setting.ephemeralDelaySeconds, unit: 's', label: 'Auto-delete delay'});
+  const sessionEndSelect = yesNoSelect(IDS.cleanupSessionEnd, setting.cleanupOnSessionEnd, 'Sweep on session end');
+
+  return {
+    embeds: [embed],
+    components: [row(modeSelect), row(delaySelect), row(sessionEndSelect), row(backButton())],
+  };
+}
+
+const DJ_MIN_QUEUE_PRESETS = [1, 2, 3, 5, 10];
+
+export function buildDjScreen(setting: Pick<Setting, 'djChannelId'>, dj: Pick<DjSetting, 'enabled' | 'minQueueSize'>, confirmation?: string): Screen {
+  const headline = [
+    `**Auto-DJ:** ${formatYesNo(dj.enabled)}`,
+    `**Message channel:** ${formatDjChannel(setting.djChannelId)}`,
+    `**Keep this many songs queued:** ${dj.minQueueSize}`,
+  ].join('\n');
+
+  const embed = new EmbedBuilder()
+    .setTitle('🎧 DJ')
+    .setDescription(withConfirmation(headline, confirmation))
+    .setColor(dj.enabled ? Colors.Green : Colors.Grey)
+    .setFooter({text: 'Auto-DJ keeps the queue full; the message channel pins DJ chat to one place.'});
+
+  const enabledSelect = yesNoSelect(IDS.djEnabled, dj.enabled, 'Auto-DJ');
+
+  const channelSelect = new ChannelSelectMenuBuilder()
+    .setCustomId(IDS.djChannel)
+    .setPlaceholder(`DJ message channel (now: ${setting.djChannelId ? '#channel' : 'follows voice channel'})`)
+    .setChannelTypes(ChannelType.GuildText, ChannelType.GuildVoice);
+  if (setting.djChannelId) {
+    channelSelect.setDefaultChannels(setting.djChannelId);
+  }
+
+  const minQueueSelect = presetIntSelect({customId: IDS.djMinQueueSize, presets: DJ_MIN_QUEUE_PRESETS, current: dj.minQueueSize, unit: '', label: 'Keep this many songs queued'});
+
+  const actionsRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(IDS.djClearChannel).setLabel('Follow active voice channel').setStyle(ButtonStyle.Secondary),
+    backButton(),
+  );
+
+  return {
+    embeds: [embed],
+    components: [row(enabledSelect), row(channelSelect), row(minQueueSelect), actionsRow],
+  };
+}
+
+const STATS_CADENCE_PRESETS = [1, 3, 7, 14, 30];
+
+export function buildStatsScreen(setting: Pick<Setting, 'statsDigestEnabled' | 'statsDigestCadenceDays' | 'statsDigestDmOwner' | 'statsWebhookUrl'>, confirmation?: string): Screen {
+  const headline = [
+    `**Digest:** ${formatYesNo(setting.statsDigestEnabled)}`,
+    `**Cadence:** every ${setting.statsDigestCadenceDays} day(s)`,
+    `**DM server owner:** ${formatYesNo(setting.statsDigestDmOwner)}`,
+  ].join('\n');
+
+  const embed = new EmbedBuilder()
+    .setTitle('📊 Stats Digest')
+    .setDescription(withConfirmation(headline, confirmation))
+    .setColor(setting.statsDigestEnabled ? Colors.Green : Colors.Grey)
+    // No menu control sets the webhook URL itself (it's free text, not
+    // menu-friendly, and there's currently no other /config subcommand left
+    // to set it from) -- this footer only ever reports its on/off status.
+    .setFooter({text: setting.statsWebhookUrl
+      ? 'Webhook is set.'
+      : 'No webhook set. Digests still send to Discord; ask the bot operator to set a webhook for cross-posting.'});
+
+  const enabledSelect = yesNoSelect(IDS.statsEnabled, setting.statsDigestEnabled, 'Digest');
+  const cadenceSelect = presetIntSelect({customId: IDS.statsCadence, presets: STATS_CADENCE_PRESETS, current: setting.statsDigestCadenceDays, unit: 'd', label: 'Cadence'});
+  const dmOwnerSelect = yesNoSelect(IDS.statsDmOwner, setting.statsDigestDmOwner, 'DM server owner');
+
+  return {
+    embeds: [embed],
+    components: [row(enabledSelect), row(cadenceSelect), row(dmOwnerSelect), row(backButton())],
+  };
+}
+
+// Which category a field customId belongs to, so a value change knows which
+// screen to re-render with its confirmation banner.
+export const categoryForCustomId = (customId: string): CategoryId => {
+  if (customId.startsWith('config:cleanup:')) {
+    return 'cleanup';
+  }
+
+  if (customId.startsWith('config:dj:')) {
+    return 'dj';
+  }
+
+  return 'stats';
+};
 
 @injectable()
 export default class implements Command {
   public readonly slashCommand = new SlashCommandBuilder()
     .setName('config')
-    .setDescription('configure bot settings')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild.toString())
-    .addSubcommand(subcommand => subcommand
-      .setName('set-playlist-limit')
-      .setDescription('set the maximum number of tracks that can be added from a playlist')
-      .addIntegerOption(option => option
-        .setName('limit')
-        .setDescription('maximum number of tracks')
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-wait-after-queue-empties')
-      .setDescription('set the time to wait before leaving the voice channel when queue empties')
-      .addIntegerOption(option => option
-        .setName('delay')
-        .setDescription('delay in seconds (set to 0 to never leave)')
-        .setRequired(true)
-        .setMinValue(0)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-leave-if-no-listeners')
-      .setDescription('set whether to leave when all other participants leave')
-      .addBooleanOption(option => option
-        .setName('value')
-        .setDescription('whether to leave when everyone else leaves')
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-queue-add-response-hidden')
-      .setDescription('set whether bot responses to queue additions are only displayed to the requester')
-      .addBooleanOption(option => option
-        .setName('value')
-        .setDescription('whether bot responses to queue additions are only displayed to the requester')
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-reduce-vol-when-voice')
-      .setDescription('set whether to turn down the volume when people speak')
-      .addBooleanOption(option => option
-        .setName('value')
-        .setDescription('whether to turn down the volume when people speak')
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-reduce-vol-when-voice-target')
-      .setDescription('set the target volume when people speak')
-      .addIntegerOption(option => option
-        .setName('volume')
-        .setDescription('volume percentage (0 is muted, 100 is max & default)')
-        .setMinValue(0)
-        .setMaxValue(100)
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-auto-announce-next-song')
-      .setDescription('set whether to announce the next song in the queue automatically')
-      .addBooleanOption(option => option
-        .setName('value')
-        .setDescription('whether to announce the next song in the queue automatically')
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-default-volume')
-      .setDescription('set default volume used when entering the voice channel')
-      .addIntegerOption(option => option
-        .setName('level')
-        .setDescription('volume percentage (0 is muted, 100 is max & default)')
-        .setMinValue(0)
-        .setMaxValue(100)
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-default-queue-page-size')
-      .setDescription('set the default page size of the /queue command')
-      .addIntegerOption(option => option
-        .setName('page-size')
-        .setDescription('page size of the /queue command')
-        .setMinValue(1)
-        .setMaxValue(30)
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-cleanup-mode')
-      .setDescription('set which bot messages get auto-deleted')
-      .addStringOption(option => option
-        .setName('mode')
-        .setDescription('none: never clean up, dj-only: clean up DJ commentary/announcements, all: clean up all bot messages')
-        .setRequired(true)
-        .addChoices(
-          {name: 'none', value: 'NONE'},
-          {name: 'dj-only', value: 'DJ_ONLY'},
-          {name: 'all', value: 'ALL_BOT_MESSAGES'},
-        )))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-cleanup-delay')
-      .setDescription('set how long a cleanup-eligible message stays before it\'s auto-deleted')
-      .addIntegerOption(option => option
-        .setName('seconds')
-        .setDescription('delay in seconds')
-        .setRequired(true)
-        .setMinValue(1)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-cleanup-on-session-end')
-      .setDescription('set whether tracked messages get swept up when the DJ session/queue ends')
-      .addBooleanOption(option => option
-        .setName('value')
-        .setDescription('whether to sweep tracked messages when the session ends')
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-stats-digest-enabled')
-      .setDescription('turn the scheduled stats digest on or off')
-      .addBooleanOption(option => option
-        .setName('value')
-        .setDescription('whether the scheduled digest should run')
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-stats-digest-cadence')
-      .setDescription('set how often the scheduled stats digest sends, in days')
-      .addIntegerOption(option => option
-        .setName('days')
-        .setDescription('cadence in days')
-        .setMinValue(1)
-        .setMaxValue(90)
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-stats-webhook')
-      .setDescription('set (or clear) the webhook URL the scheduled stats digest posts to')
-      .addStringOption(option => option
-        .setName('url')
-        .setDescription('webhook URL, or "none" to clear it')
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-stats-dm-owner')
-      .setDescription('set whether the scheduled stats digest also DMs the server owner')
-      .addBooleanOption(option => option
-        .setName('value')
-        .setDescription('whether to DM the server owner')
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('set-dj-channel')
-      .setDescription('pin DJ messages (auto-queue, announcements) to one channel regardless of active voice channel')
-      .addChannelOption(option => option
-        .setName('channel')
-        .setDescription('channel DJ messages should be sent to (text or voice channel with text chat)')
-        // Numeric literals (text=0, voice=2), not ChannelType.GuildText/GuildVoice:
-        // @discordjs/builders bundles its own (older) discord-api-types copy, so
-        // its ChannelType enum is a structurally-different type from discord.js's
-        // and fails to typecheck here. These ids are stable Discord API channel
-        // type values, same as ChannelSelectMenuBuilder's setChannelTypes() in
-        // muse-settings.ts restricts to below.
-        .addChannelTypes(0, 2)
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
-      .setName('clear-dj-channel')
-      .setDescription('reset DJ messages back to following the active voice channel'))
-    .addSubcommand(subcommand => subcommand
-      .setName('get')
-      .setDescription('show all settings'));
+    .setDescription('guided settings menu: cleanup, DJ, and stats digest')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild.toString());
 
-  async execute(interaction: ChatInputCommandInteraction) {
-    // Ensure guild settings exist before trying to update
-    await getGuildSettings(interaction.guild!.id);
+  public async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    const guildId = interaction.guild!.id;
 
-    switch (interaction.options.getSubcommand()) {
-      case 'set-playlist-limit': {
-        const limit: number = interaction.options.getInteger('limit')!;
+    // Ensure guild settings exist before trying to read/update.
+    await getGuildSettings(guildId);
 
-        if (limit < 1) {
-          throw new Error('invalid limit');
+    const top = buildTopScreen();
+    const message = await interaction.reply({
+      embeds: top.embeds,
+      // Discord.js@14.11's InteractionReplyOptions['components'] typing can't
+      // structurally unify ActionRowBuilder instances; safe at runtime (same
+      // pattern as add-query-to-queue.ts's voice-channel-full confirmation
+      // and history.ts's select menu).
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      components: top.components as any,
+      ephemeral: true,
+      fetchReply: true,
+    });
+
+    // This is an interactive wizard: each iteration must wait for the
+    // previous step's click before it knows what to render next, so the
+    // awaits below can't be parallelized. Wrapped in try/finally so a
+    // mid-wizard throw (e.g. a transient DB error in handleComponent)
+    // still clears the components instead of leaving a zombie ephemeral
+    // message with live-looking but dead controls.
+    try {
+      for (;;) {
+        let component: MessageComponentInteraction;
+        try {
+          // Omitting componentType collects both buttons and select menus on
+          // this message; the return type can't be inferred without it, hence
+          // the cast (same class of discord.js@14.11 typing friction as above).
+          // eslint-disable-next-line no-await-in-loop
+          component = await message.awaitMessageComponent({
+            filter: i => i.user.id === interaction.user.id,
+            time: SESSION_TIMEOUT_MS,
+          }) as unknown as MessageComponentInteraction;
+        } catch {
+          break;
         }
 
-        await prisma.setting.update({
-          where: {
-            guildId: interaction.guild!.id,
-          },
-          data: {
-            playlistLimit: limit,
-          },
-        });
+        // eslint-disable-next-line no-await-in-loop
+        const screen = await this.handleComponent(component, guildId);
+        // eslint-disable-next-line no-await-in-loop, @typescript-eslint/no-unsafe-assignment
+        await component.update({embeds: screen.embeds, components: screen.components as any});
+      }
+    } finally {
+      await interaction.editReply({components: []}).catch(() => undefined);
+    }
+  }
 
-        await interaction.reply('👍 limit updated');
+  private async handleComponent(component: MessageComponentInteraction, guildId: string): Promise<Screen> {
+    if (component.customId === IDS.back) {
+      return buildTopScreen();
+    }
 
-        break;
+    if (component.customId === IDS.category && component.isStringSelectMenu()) {
+      return this.renderCategory(component.values[0] as CategoryId, guildId);
+    }
+
+    const value = component.isStringSelectMenu() || component.isChannelSelectMenu()
+      ? component.values[0]
+      : ''; // The DJ "clear channel" button carries no value
+
+    const confirmation = await this.applyChange(component.customId, value, guildId);
+    return this.renderCategory(categoryForCustomId(component.customId), guildId, confirmation);
+  }
+
+  private async renderCategory(category: CategoryId, guildId: string, confirmation?: string): Promise<Screen> {
+    const setting = await getGuildSettings(guildId);
+
+    switch (category) {
+      case 'cleanup': {
+        return buildCleanupScreen(setting, confirmation);
       }
 
-      case 'set-wait-after-queue-empties': {
-        const delay = interaction.options.getInteger('delay')!;
-
-        await prisma.setting.update({
-          where: {
-            guildId: interaction.guild!.id,
-          },
-          data: {
-            secondsToWaitAfterQueueEmpties: delay,
-          },
-        });
-
-        await interaction.reply('👍 wait delay updated');
-
-        break;
+      case 'dj': {
+        const dj = await getDjSettings(guildId);
+        return buildDjScreen(setting, dj, confirmation);
       }
 
-      case 'set-leave-if-no-listeners': {
-        const value = interaction.options.getBoolean('value')!;
-
-        await prisma.setting.update({
-          where: {
-            guildId: interaction.guild!.id,
-          },
-          data: {
-            leaveIfNoListeners: value,
-          },
-        });
-
-        await interaction.reply('👍 leave setting updated');
-
-        break;
+      case 'stats': {
+        return buildStatsScreen(setting, confirmation);
       }
 
-      case 'set-queue-add-response-hidden': {
-        const value = interaction.options.getBoolean('value')!;
+      default: {
+        throw new Error(`unknown settings category: ${category as string}`);
+      }
+    }
+  }
 
-        await prisma.setting.update({
-          where: {
-            guildId: interaction.guild!.id,
-          },
-          data: {
-            queueAddResponseEphemeral: value,
-          },
-        });
-
-        await interaction.reply('👍 queue add notification setting updated');
-
-        break;
+  private async applyChange(customId: string, value: string, guildId: string): Promise<string> {
+    switch (customId) {
+      case IDS.cleanupMode: {
+        const mode = value as 'NONE' | 'DJ_ONLY' | 'ALL_BOT_MESSAGES';
+        await prisma.setting.update({where: {guildId}, data: {cleanupMode: mode}});
+        return `Cleanup mode is now **${formatCleanupMode(mode)}**.`;
       }
 
-      case 'set-auto-announce-next-song': {
-        const value = interaction.options.getBoolean('value')!;
-
-        await prisma.setting.update({
-          where: {
-            guildId: interaction.guild!.id,
-          },
-          data: {
-            autoAnnounceNextSong: value,
-          },
-        });
-
-        await interaction.reply('👍 auto announce setting updated');
-
-        break;
+      case IDS.cleanupDelay: {
+        const seconds = Number(value);
+        await prisma.setting.update({where: {guildId}, data: {ephemeralDelaySeconds: seconds}});
+        return `Cleanup delay is now **${seconds}s**.`;
       }
 
-      case 'set-default-volume': {
-        const value = interaction.options.getInteger('level')!;
-
-        await prisma.setting.update({
-          where: {
-            guildId: interaction.guild!.id,
-          },
-          data: {
-            defaultVolume: value,
-          },
-        });
-
-        await interaction.reply('👍 volume setting updated');
-
-        break;
+      case IDS.cleanupSessionEnd: {
+        const enabled = value === 'true';
+        await prisma.setting.update({where: {guildId}, data: {cleanupOnSessionEnd: enabled}});
+        return `Cleanup on session end is now **${formatYesNo(enabled)}**.`;
       }
 
-      case 'set-default-queue-page-size': {
-        const value = interaction.options.getInteger('page-size')!;
-
-        await prisma.setting.update({
-          where: {
-            guildId: interaction.guild!.id,
-          },
-          data: {
-            defaultQueuePageSize: value,
-          },
-        });
-
-        await interaction.reply('👍 default queue page size updated');
-
-        break;
+      case IDS.djEnabled: {
+        const enabled = value === 'true';
+        await updateDjSettings(guildId, {enabled});
+        return `Auto-DJ is now **${formatYesNo(enabled)}**.`;
       }
 
-      case 'set-reduce-vol-when-voice': {
-        const value = interaction.options.getBoolean('value')!;
-
-        await prisma.setting.update({
-          where: {
-            guildId: interaction.guild!.id,
-          },
-          data: {
-            turnDownVolumeWhenPeopleSpeak: value,
-          },
-        });
-
-        await interaction.reply('👍 turn down volume setting updated');
-
-        break;
+      case IDS.djMinQueueSize: {
+        const size = Number(value);
+        await updateDjSettings(guildId, {minQueueSize: size});
+        return `Auto-DJ will now keep **${size}** song(s) queued, requesting that many new tracks each time it triggers.`;
       }
 
-      case 'set-reduce-vol-when-voice-target': {
-        const value = interaction.options.getInteger('volume')!;
-
-        await prisma.setting.update({
-          where: {
-            guildId: interaction.guild!.id,
-          },
-          data: {
-            turnDownVolumeWhenPeopleSpeakTarget: value,
-          },
-        });
-
-        await interaction.reply('👍 turn down volume target setting updated');
-
-        break;
+      case IDS.djChannel: {
+        await prisma.setting.update({where: {guildId}, data: {djChannelId: value}});
+        return `DJ messages will now be sent to <#${value}>.`;
       }
 
-      case 'set-cleanup-mode': {
-        const mode = interaction.options.getString('mode', true) as 'NONE' | 'DJ_ONLY' | 'ALL_BOT_MESSAGES';
-
-        await prisma.setting.update({
-          where: {
-            guildId: interaction.guild!.id,
-          },
-          data: {
-            cleanupMode: mode,
-          },
-        });
-
-        await interaction.reply('👍 cleanup mode updated');
-
-        break;
+      case IDS.djClearChannel: {
+        await prisma.setting.update({where: {guildId}, data: {djChannelId: null}});
+        return 'DJ messages will follow the active voice channel again.';
       }
 
-      case 'set-cleanup-delay': {
-        const value = interaction.options.getInteger('seconds')!;
-
-        await prisma.setting.update({
-          where: {
-            guildId: interaction.guild!.id,
-          },
-          data: {
-            ephemeralDelaySeconds: value,
-          },
-        });
-
-        await interaction.reply('👍 cleanup delay updated');
-
-        break;
+      case IDS.statsEnabled: {
+        const enabled = value === 'true';
+        await prisma.setting.update({where: {guildId}, data: {statsDigestEnabled: enabled}});
+        return `Scheduled stats digest is now **${formatYesNo(enabled)}**.`;
       }
 
-      case 'set-cleanup-on-session-end': {
-        const value = interaction.options.getBoolean('value')!;
-
-        await prisma.setting.update({
-          where: {
-            guildId: interaction.guild!.id,
-          },
-          data: {
-            cleanupOnSessionEnd: value,
-          },
-        });
-
-        await interaction.reply('👍 cleanup-on-session-end setting updated');
-
-        break;
+      case IDS.statsCadence: {
+        const days = Number(value);
+        await prisma.setting.update({where: {guildId}, data: {statsDigestCadenceDays: days}});
+        return `Stats digest will now send every **${days} day(s)**.`;
       }
 
-      case 'set-stats-digest-enabled': {
-        const value = interaction.options.getBoolean('value', true);
-
-        await prisma.setting.update({
-          where: {guildId: interaction.guild!.id},
-          data: {statsDigestEnabled: value},
-        });
-
-        await interaction.reply('👍 scheduled stats digest setting updated');
-
-        break;
+      case IDS.statsDmOwner: {
+        const enabled = value === 'true';
+        await prisma.setting.update({where: {guildId}, data: {statsDigestDmOwner: enabled}});
+        return `Stats digest **${enabled ? 'will' : 'will not'}** DM the server owner.`;
       }
 
-      case 'set-stats-digest-cadence': {
-        const days = interaction.options.getInteger('days', true);
-
-        await prisma.setting.update({
-          where: {guildId: interaction.guild!.id},
-          data: {statsDigestCadenceDays: days},
-        });
-
-        await interaction.reply('👍 stats digest cadence updated');
-
-        break;
+      default: {
+        throw new Error(`unhandled settings control: ${customId}`);
       }
-
-      case 'set-stats-webhook': {
-        const url = interaction.options.getString('url', true).trim();
-
-        await prisma.setting.update({
-          where: {guildId: interaction.guild!.id},
-          data: {statsWebhookUrl: url.toLowerCase() === 'none' ? null : url},
-        });
-
-        await interaction.reply('👍 stats digest webhook updated');
-
-        break;
-      }
-
-      case 'set-stats-dm-owner': {
-        const value = interaction.options.getBoolean('value', true);
-
-        await prisma.setting.update({
-          where: {guildId: interaction.guild!.id},
-          data: {statsDigestDmOwner: value},
-        });
-
-        await interaction.reply('👍 stats digest DM-owner setting updated');
-
-        break;
-      }
-
-      case 'set-dj-channel': {
-        const channel = interaction.options.getChannel('channel', true);
-
-        await prisma.setting.update({
-          where: {guildId: interaction.guild!.id},
-          data: {djChannelId: channel.id},
-        });
-
-        await interaction.reply(`👍 DJ messages will now go to <#${channel.id}>`);
-
-        break;
-      }
-
-      case 'clear-dj-channel': {
-        await prisma.setting.update({
-          where: {guildId: interaction.guild!.id},
-          data: {djChannelId: null},
-        });
-
-        await interaction.reply('👍 DJ messages will follow the active voice channel again');
-
-        break;
-      }
-
-      case 'get': {
-        const embed = new EmbedBuilder().setTitle('Config');
-
-        const config = await getGuildSettings(interaction.guild!.id);
-
-        const settingsToShow = {
-          'Playlist Limit': config.playlistLimit,
-          'Wait before leaving after queue empty': config.secondsToWaitAfterQueueEmpties === 0
-            ? 'never leave'
-            : `${config.secondsToWaitAfterQueueEmpties}s`,
-          'Leave if there are no listeners': config.leaveIfNoListeners ? 'yes' : 'no',
-          'Auto announce next song in queue': config.autoAnnounceNextSong ? 'yes' : 'no',
-          'Add to queue reponses show for requester only': config.queueAddResponseEphemeral ? 'yes' : 'no',
-          'Default Volume': config.defaultVolume,
-          'Default queue page size': config.defaultQueuePageSize,
-          'Reduce volume when people speak': config.turnDownVolumeWhenPeopleSpeak ? 'yes' : 'no',
-          'Reduce volume when people speak target': config.turnDownVolumeWhenPeopleSpeakTarget,
-          'Cleanup mode': config.cleanupMode,
-          'Cleanup delay': `${config.ephemeralDelaySeconds}s`,
-          'Cleanup on session end': config.cleanupOnSessionEnd ? 'yes' : 'no',
-          'Scheduled stats digest': config.statsDigestEnabled ? 'yes' : 'no',
-          'Stats digest cadence': `${config.statsDigestCadenceDays} day(s)`,
-          'Stats digest webhook': config.statsWebhookUrl ?? 'not set',
-          'Stats digest DMs server owner': config.statsDigestDmOwner ? 'yes' : 'no',
-          'DJ message channel': config.djChannelId ? `<#${config.djChannelId}>` : 'follows active voice channel',
-        };
-
-        let description = '';
-        for (const [key, value] of Object.entries(settingsToShow)) {
-          description += `**${key}**: ${value}\n`;
-        }
-
-        embed.setDescription(description);
-
-        await interaction.reply({embeds: [embed]});
-
-        break;
-      }
-
-      default:
-        throw new Error('unknown subcommand');
     }
   }
 }

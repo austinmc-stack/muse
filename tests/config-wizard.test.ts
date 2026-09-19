@@ -25,7 +25,7 @@ vi.mock('../src/utils/db.js', () => ({
   },
 }));
 
-import MuseSettings, {
+import Config, {
   buildCleanupScreen,
   buildDjScreen,
   buildStatsScreen,
@@ -34,7 +34,7 @@ import MuseSettings, {
   formatCleanupMode,
   formatDjChannel,
   formatYesNo,
-} from '../src/commands/muse-settings.js';
+} from '../src/commands/config.js';
 
 const baseSetting = {
   cleanupMode: 'DJ_ONLY' as const,
@@ -67,10 +67,10 @@ describe('pure formatting helpers', () => {
   });
 
   it('maps each field customId to its owning category', () => {
-    expect(categoryForCustomId('muse-settings:cleanup:mode')).toBe('cleanup');
-    expect(categoryForCustomId('muse-settings:dj:channel')).toBe('dj');
-    expect(categoryForCustomId('muse-settings:dj:clear-channel')).toBe('dj');
-    expect(categoryForCustomId('muse-settings:stats:enabled')).toBe('stats');
+    expect(categoryForCustomId('config:cleanup:mode')).toBe('cleanup');
+    expect(categoryForCustomId('config:dj:channel')).toBe('dj');
+    expect(categoryForCustomId('config:dj:clear-channel')).toBe('dj');
+    expect(categoryForCustomId('config:stats:enabled')).toBe('stats');
   });
 });
 
@@ -115,17 +115,20 @@ describe('screen builders', () => {
     expect(screen.embeds[0].toJSON().description).toContain('**Message channel:** <#999>');
   });
 
-  it('points to /config set-stats-webhook instead of a fake free-text control', () => {
-    const screen = buildStatsScreen(baseSetting);
-    expect(screen.embeds[0].toJSON().footer?.text).toContain('/config set-stats-webhook');
+  it('reports webhook status without pointing at a removed subcommand', () => {
+    const withWebhook = buildStatsScreen({...baseSetting, statsWebhookUrl: 'https://example.com/hook'});
+    const withoutWebhook = buildStatsScreen(baseSetting);
+    expect(withWebhook.embeds[0].toJSON().footer?.text).toContain('Webhook is set.');
+    expect(withoutWebhook.embeds[0].toJSON().footer?.text).not.toContain('/config set-stats-webhook');
   });
 });
 
 describe('slash command metadata', () => {
-  it('registers as /muse-settings, restricted to Manage Guild', () => {
-    const json = new MuseSettings().slashCommand.toJSON();
+  it('registers as /config with no subcommands, restricted to Manage Guild', () => {
+    const json = new Config().slashCommand.toJSON();
 
-    expect(json.name).toBe('muse-settings');
+    expect(json.name).toBe('config');
+    expect(json.options ?? []).toHaveLength(0);
     expect(json.default_member_permissions).toBe(PermissionFlagsBits.ManageGuild.toString());
   });
 });
@@ -189,7 +192,7 @@ describe('execute() end-to-end wizard flow', () => {
       editReply,
     } as unknown as ChatInputCommandInteraction;
 
-    await new MuseSettings().execute(interaction);
+    await new Config().execute(interaction);
 
     return {reply, editReply, message};
   };
@@ -201,9 +204,9 @@ describe('execute() end-to-end wizard flow', () => {
   });
 
   it('drills into DJ, sets the channel, and echoes back the exact wording the brief asks for', async () => {
-    const category = makeComponent('muse-settings:category', ['dj']);
+    const category = makeComponent('config:category', ['dj']);
     const channelPick = {
-      ...makeComponent('muse-settings:dj:channel', ['555']),
+      ...makeComponent('config:dj:channel', ['555']),
       isStringSelectMenu: () => false,
       isChannelSelectMenu: () => true,
     };
@@ -218,10 +221,10 @@ describe('execute() end-to-end wizard flow', () => {
   });
 
   it('round-trips: reopening the DJ screen after a change shows the new value', async () => {
-    const category = makeComponent('muse-settings:category', ['dj']);
-    const enableDj = makeComponent('muse-settings:dj:enabled', ['true']);
-    const backToTop = makeComponent('muse-settings:back');
-    const category2 = makeComponent('muse-settings:category', ['dj']);
+    const category = makeComponent('config:category', ['dj']);
+    const enableDj = makeComponent('config:dj:enabled', ['true']);
+    const backToTop = makeComponent('config:back');
+    const category2 = makeComponent('config:category', ['dj']);
 
     await runWizard([category, enableDj, backToTop, category2]);
 
@@ -230,8 +233,8 @@ describe('execute() end-to-end wizard flow', () => {
   });
 
   it('sets cleanup mode and applies the write to the right guild', async () => {
-    const category = makeComponent('muse-settings:category', ['cleanup']);
-    const setMode = makeComponent('muse-settings:cleanup:mode', ['ALL_BOT_MESSAGES']);
+    const category = makeComponent('config:category', ['cleanup']);
+    const setMode = makeComponent('config:cleanup:mode', ['ALL_BOT_MESSAGES']);
 
     await runWizard([category, setMode]);
 
@@ -239,9 +242,9 @@ describe('execute() end-to-end wizard flow', () => {
   });
 
   it('clears the DJ channel via the button with no select value', async () => {
-    const category = makeComponent('muse-settings:category', ['dj']);
+    const category = makeComponent('config:category', ['dj']);
     const clearButton = {
-      ...makeComponent('muse-settings:dj:clear-channel'),
+      ...makeComponent('config:dj:clear-channel'),
       isStringSelectMenu: () => false,
       isButton: () => true,
     };

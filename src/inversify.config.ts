@@ -31,7 +31,6 @@ import History from './commands/history.js';
 import LoopQueue from './commands/loop-queue.js';
 import Loop from './commands/loop.js';
 import Move from './commands/move.js';
-import MuseSettings from './commands/muse-settings.js';
 import Next from './commands/next.js';
 import NowPlaying from './commands/now-playing.js';
 import Pause from './commands/pause.js';
@@ -98,7 +97,6 @@ if (config.SPOTIFY_CLIENT_ID !== '' && config.SPOTIFY_CLIENT_SECRET !== '') {
   LoopQueue,
   Loop,
   Move,
-  MuseSettings,
   Next,
   NowPlaying,
   Pause,

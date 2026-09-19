@@ -262,10 +262,6 @@ describe('command metadata', () => {
     expect(findOption(serialized.get('remove')!, 'position')).toMatchObject({min_value: 1});
     expect(findOption(serialized.get('remove')!, 'range')).toMatchObject({min_value: 1});
     expect(findOption(serialized.get('volume')!, 'level')).toMatchObject({min_value: 0, max_value: 100});
-    expect(findOption(serialized.get('config')!, 'set-wait-after-queue-empties', 'delay')).toMatchObject({min_value: 0});
-    expect(findOption(serialized.get('config')!, 'set-reduce-vol-when-voice-target', 'volume')).toMatchObject({min_value: 0, max_value: 100});
-    expect(findOption(serialized.get('config')!, 'set-default-volume', 'level')).toMatchObject({min_value: 0, max_value: 100});
-    expect(findOption(serialized.get('config')!, 'set-default-queue-page-size', 'page-size')).toMatchObject({min_value: 1, max_value: 30});
   });
 
   it('limits /config to members with Manage Guild by default', () => {
@@ -591,26 +587,3 @@ describe('/loop-queue', () => {
   });
 });
 
-describe('/config get', () => {
-  it('shows requester-only responses and the voice reduction target from their own settings', async () => {
-    mocks.getGuildSettings.mockResolvedValue({
-      playlistLimit: 20,
-      secondsToWaitAfterQueueEmpties: 30,
-      leaveIfNoListeners: true,
-      autoAnnounceNextSong: false,
-      queueAddResponseEphemeral: true,
-      defaultVolume: 80,
-      defaultQueuePageSize: 10,
-      turnDownVolumeWhenPeopleSpeak: true,
-      turnDownVolumeWhenPeopleSpeakTarget: 23,
-    });
-    const {interaction, reply} = makeInteraction({subcommand: 'get'});
-
-    await new Config().execute(interaction);
-
-    const response = reply.mock.calls[0][0] as {embeds: Array<{toJSON: () => {description?: string}}>};
-    const description = response.embeds[0].toJSON().description;
-    expect(description).toContain('**Add to queue reponses show for requester only**: yes');
-    expect(description).toContain('**Reduce volume when people speak target**: 23');
-  });
-});
